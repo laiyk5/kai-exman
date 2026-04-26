@@ -38,6 +38,10 @@ No PR or feature will be accepted without complete Google-style docstrings.
 
 Every module must have a top-level description. Every class must document its purpose and attributes. Every function and method must document its `Args`, `Returns`, and potential `Raises`.
 
+### Type Safety
+
+All code must pass `mypy --strict`. When adding a new third-party dependency, you must also add the corresponding type stubs package (e.g., `types-PyYAML` for `pyyaml`) to `[project.optional-dependencies]` test if one exists on PyPI.
+
 For CLI-related logic, use `click.testing.CliRunner`. Example:
 
 ```python
