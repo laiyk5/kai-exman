@@ -1,5 +1,4 @@
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -117,7 +116,7 @@ def test_experiment_finish(tmp_exman_path):
 def test_list_and_get(tmp_exman_path):
     exman = ExMan(root=tmp_exman_path)
     exp1 = exman.init(description="exp one", tags=["a"])
-    exp2 = exman.init(description="exp two", tags=["b"])
+    _ = exman.init(description="exp two", tags=["b"])
 
     all_exps = exman.list()
     assert len(all_exps) == 2

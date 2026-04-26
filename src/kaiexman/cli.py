@@ -163,7 +163,7 @@ def init(ctx: click.Context, description: str, tags: str, config: str | None) ->
     """
     cfg = None
     if config and Path(config).exists():
-        with open(config, "r", encoding="utf-8") as f:
+        with open(config, encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
 
     tag_list = [t.strip() for t in tags.split(",")] if tags else []
@@ -419,12 +419,7 @@ def _list_plain(
             status_label = exp.metadata.status.upper()
             desc = exp.metadata.description or "(no description)"
 
-            line = (
-                f"{exp.metadata.exp_id:8}  "
-                f"{date_str:16}  "
-                f"{status_label:10}  "
-                f"{desc}"
-            )
+            line = f"{exp.metadata.exp_id:8}  {date_str:16}  {status_label:10}  {desc}"
             if sort_by:
                 score_str = f"{score:.4f}" if score is not None else "-"
                 line += f"  [{sort_by}={score_str}]"

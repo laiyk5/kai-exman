@@ -26,7 +26,12 @@ class Experiment:
         config: Configuration dictionary (may be empty).
     """
 
-    def __init__(self, root: Path, metadata: Metadata, config: dict[str, Any] | None = None):
+    def __init__(
+        self,
+        root: Path,
+        metadata: Metadata,
+        config: dict[str, Any] | None = None,
+    ) -> None:
         """Initialize an Experiment instance.
 
         Args:

@@ -6,6 +6,7 @@ sys.path.insert(0, str(src))
 
 import click
 import pytest
+
 from kaiexman import ExMan
 from kaiexman.cli import _resolve_exp_id
 
