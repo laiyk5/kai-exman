@@ -29,5 +29,8 @@ jobs:
       - name: Run pytest
         run: pytest -v
 
+      - name: Run mypy
+        run: mypy --strict src/kaiexman/
+
       - name: Check docstring coverage
         run: interrogate -v --fail-under=100 src/kaiexman/

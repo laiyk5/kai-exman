@@ -11,5 +11,17 @@ kai-exman = "kaiexman.cli:main"
 
 [project.optional-dependencies]
 docs = ["sphinx>=7.0", "sphinx-rtd-theme>=2.0", "myst-parser>=3.0"]
-test = ["pytest>=8.0", "interrogate>=1.5"]
+test = ["pytest>=8.0", "interrogate>=1.5", "mypy>=1.5"]
 dev = ["pre-commit>=3.0"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+show_error_codes = true
+ignore_missing_imports = true
