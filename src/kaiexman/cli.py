@@ -17,7 +17,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from kaiexman.experiment import Experiment
+from kaiexman.experiment import Experiment, validate_tag
 from kaiexman.manager import ExMan
 
 
@@ -120,6 +120,21 @@ def _resolve_exp_id(exman: ExMan, prefix: str) -> str:
     )
 
 
+def _validate_tag(tag: str) -> None:
+    """Validate a tag and raise ClickException on failure.
+
+    Args:
+        tag: Tag name to validate.
+
+    Raises:
+        click.ClickException: If the tag format is invalid.
+    """
+    try:
+        validate_tag(tag)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
 @click.group(cls=AliasedGroup)
 @click.option(
     "--path",
@@ -212,6 +227,11 @@ def init(ctx: click.Context, description: str, tags: str, config: str | None) ->
     is_flag=True,
     help="Use compact one-line format per experiment",
 )
+@click.option(
+    "--tag",
+    "tag_filter",
+    help="Filter experiments by tag name",
+)
 @click.pass_context
 def list_cmd(
     ctx: click.Context,
@@ -219,6 +239,7 @@ def list_cmd(
     order: str,
     top: int | None,
     oneline: bool,
+    tag_filter: str | None,
 ) -> None:
     """List experiments, optionally sorted by a metric.
 
@@ -227,6 +248,9 @@ def list_cmd(
     """
     exman = ExMan(root=ctx.obj["path"])
     experiments = exman.list()
+
+    if tag_filter:
+        experiments = [e for e in experiments if tag_filter in e.metadata.tags]
 
     if not experiments:
         click.echo("No experiments found.")
@@ -342,10 +366,16 @@ def _list_rich(
             else:
                 desc = "[dim](no description)[/dim]"
 
+            tags_part = ""
+            if exp.metadata.tags:
+                tags_display = ", ".join(exp.metadata.tags)
+                tags_part = f"[bold magenta][{tags_display}][/bold magenta]  "
+
             line = (
                 f"[yellow]{exp.metadata.exp_id:8}[/yellow]  "
                 f"[cyan]{date_str:16}[/cyan]  "
                 f"[{status_color}]{status_label:10}[/{status_color}]  "
+                f"{tags_part}"
                 f"{desc}"
             )
             if sort_by:
@@ -419,7 +449,15 @@ def _list_plain(
             status_label = exp.metadata.status.upper()
             desc = exp.metadata.description or "(no description)"
 
-            line = f"{exp.metadata.exp_id:8}  {date_str:16}  {status_label:10}  {desc}"
+            tags_part = ""
+            if exp.metadata.tags:
+                tags_display = ", ".join(exp.metadata.tags)
+                tags_part = f"[{tags_display}]  "
+
+            line = (
+                f"{exp.metadata.exp_id:8}  {date_str:16}  {status_label:10}  "
+                f"{tags_part}{desc}"
+            )
             if sort_by:
                 score_str = f"{score:.4f}" if score is not None else "-"
                 line += f"  [{sort_by}={score_str}]"
@@ -553,6 +591,39 @@ def show(ctx: click.Context, exp_id: str) -> None:
     console.print(meta_panel)
     console.print(cfg_panel)
     console.print(metrics_panel)
+
+
+@cli.command(name="tag")
+@click.argument("exp_id")
+@click.argument("tag_name")
+@click.option("--delete", "-d", is_flag=True, help="Remove the tag")
+@click.pass_context
+def tag_cmd(
+    ctx: click.Context,
+    exp_id: str,
+    tag_name: str,
+    delete: bool,
+) -> None:
+    """Add or remove a tag on an experiment."""
+    _validate_tag(tag_name)
+    exman = ExMan(root=ctx.obj["path"])
+    resolved_id = _resolve_exp_id(exman, exp_id)
+    exp = exman.get(resolved_id)
+
+    if exp is None:
+        raise click.ClickException(f"Experiment '{resolved_id}' not found.")
+
+    if delete:
+        exp.remove_tag(tag_name)
+        action = "removed from"
+    else:
+        exp.add_tag(tag_name)
+        action = "added to"
+
+    console = _get_console(ctx)
+    console.print(
+        f"[bold green]Tag '{tag_name}' {action} {resolved_id}.[/bold green]"
+    )
 
 
 def main() -> None:

@@ -6,6 +6,7 @@ recording bad cases, and generating summaries.
 """
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -15,6 +16,24 @@ from typing import Any
 import yaml
 
 from kaiexman.models import Metadata, MetricsRow
+
+_TAG_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
+
+
+def validate_tag(tag: str) -> None:
+    """Validate a tag name against the allowed format.
+
+    Args:
+        tag: Tag string to validate.
+
+    Raises:
+        ValueError: If the tag contains invalid characters or format.
+    """
+    if not _TAG_PATTERN.match(tag):
+        raise ValueError(
+            "Invalid tag format. Use only alphanumeric, dots, underscores, "
+            "or hyphens, starting with a letter or number."
+        )
 
 
 class Experiment:
@@ -91,6 +110,30 @@ class Experiment:
         """
         self.metadata.status = status
         self.write_metadata()
+
+    def add_tag(self, tag: str) -> None:
+        """Add a tag to the experiment if valid and not already present.
+
+        Args:
+            tag: Tag name to add.
+
+        Raises:
+            ValueError: If the tag format is invalid.
+        """
+        validate_tag(tag)
+        if tag not in self.metadata.tags:
+            self.metadata.tags.append(tag)
+            self.write_metadata()
+
+    def remove_tag(self, tag: str) -> None:
+        """Remove a tag from the experiment if present.
+
+        Args:
+            tag: Tag name to remove.
+        """
+        if tag in self.metadata.tags:
+            self.metadata.tags.remove(tag)
+            self.write_metadata()
 
     def log_metrics(self, step: int, values: dict[str, Any]) -> None:
         """Append a metrics row to metrics.jsonl in a thread-safe manner.

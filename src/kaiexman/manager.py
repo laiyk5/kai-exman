@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from kaiexman.experiment import Experiment
+from kaiexman.experiment import Experiment, validate_tag
 from kaiexman.models import Metadata
 
 
@@ -89,6 +89,8 @@ class ExMan:
         (folder / "artifacts" / "plots").mkdir(parents=True, exist_ok=True)
 
         tag_list = [t for t in (tags or []) if t]
+        for tag in tag_list:
+            validate_tag(tag)
         meta = Metadata(
             exp_id=exp_id,
             tags=tag_list,
