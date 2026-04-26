@@ -9,6 +9,7 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import click
 import yaml
@@ -16,6 +17,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from kaiexman.experiment import Experiment
 from kaiexman.manager import ExMan
 
 
@@ -28,7 +30,7 @@ class AliasedGroup(click.Group):
 
     _aliases = {"log": "list"}
 
-    def get_command(self, ctx, cmd_name):
+    def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
         """Resolve a command name, falling back to registered aliases.
 
         Args:
@@ -279,7 +281,7 @@ def _format_dt(iso: str) -> str:
         return iso[:19] if len(iso) >= 19 else iso
 
 
-def _params_line(config: dict) -> str:
+def _params_line(config: dict[str, Any]) -> str:
     """Build a compact parameter summary string.
 
     Args:
@@ -313,7 +315,7 @@ def _oneline_dt(iso: str) -> str:
 
 def _list_rich(
     ctx: click.Context,
-    scored: list,
+    scored: list[tuple[Experiment, dict[str, dict[str, float]], float | None]],
     sort_by: str | None,
     order: str,
     oneline: bool,
@@ -398,7 +400,7 @@ def _list_rich(
 
 
 def _list_plain(
-    scored: list,
+    scored: list[tuple[Experiment, dict[str, dict[str, float]], float | None]],
     sort_by: str | None,
     order: str,
     oneline: bool,

@@ -8,6 +8,7 @@ import os
 import uuid
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from kaiexman.experiment import Experiment
 from kaiexman.models import Metadata
@@ -60,7 +61,7 @@ class ExMan:
         self,
         description: str = "",
         tags: list[str] | None = None,
-        config: dict | None = None,
+        config: dict[str, Any] | None = None,
         data_version: str = "",
     ) -> Experiment:
         """Create and initialize a new experiment.

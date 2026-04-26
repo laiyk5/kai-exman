@@ -26,7 +26,7 @@ class Experiment:
         config: Configuration dictionary (may be empty).
     """
 
-    def __init__(self, root: Path, metadata: Metadata, config: dict | None = None):
+    def __init__(self, root: Path, metadata: Metadata, config: dict[str, Any] | None = None):
         """Initialize an Experiment instance.
 
         Args:
@@ -87,7 +87,7 @@ class Experiment:
         self.metadata.status = status
         self.write_metadata()
 
-    def log_metrics(self, step: int, values: dict) -> None:
+    def log_metrics(self, step: int, values: dict[str, Any]) -> None:
         """Append a metrics row to metrics.jsonl in a thread-safe manner.
 
         NaN and infinite values are serialized as null by Pydantic v2.
@@ -156,7 +156,7 @@ class Experiment:
             "extra": extra or {},
         }
         with self._lock:
-            cases: list[dict] = []
+            cases: list[dict[str, Any]] = []
             if self._bad_cases_path.exists():
                 cases = json.loads(self._bad_cases_path.read_text(encoding="utf-8"))
             cases.append(entry)
