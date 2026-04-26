@@ -187,7 +187,7 @@ def init(ctx: click.Context, description: str, tags: str, config: str | None) ->
 
     console = _get_console(ctx)
     table = Table(show_header=False, box=None)
-    table.add_row("[bold]Experiment ID:[/bold]", exp.metadata.exp_id)
+    table.add_row("[bold]Experiment ID:[/bold]", exp.metadata.exp_id[:8])
     table.add_row("[bold]Path:[/bold]", str(exp.root))
     table.add_row("[bold]Git Hash:[/bold]", exp.metadata.git_hash or "N/A")
     table.add_row("[bold]Status:[/bold]", exp.metadata.status)
@@ -232,6 +232,11 @@ def init(ctx: click.Context, description: str, tags: str, config: str | None) ->
     "tag_filter",
     help="Filter experiments by tag name",
 )
+@click.option(
+    "--full-id",
+    is_flag=True,
+    help="Display full 16-character experiment IDs",
+)
 @click.pass_context
 def list_cmd(
     ctx: click.Context,
@@ -240,6 +245,7 @@ def list_cmd(
     top: int | None,
     oneline: bool,
     tag_filter: str | None,
+    full_id: bool,
 ) -> None:
     """List experiments, optionally sorted by a metric.
 
@@ -274,9 +280,9 @@ def list_cmd(
         scored = scored[:top]
 
     if _use_pager(ctx):
-        _list_rich(ctx, scored, sort_by, order, oneline)
+        _list_rich(ctx, scored, sort_by, order, oneline, full_id)
     else:
-        _list_plain(scored, sort_by, order, oneline)
+        _list_plain(scored, sort_by, order, oneline, full_id)
 
 
 _STATUS_COLORS = {
@@ -337,12 +343,26 @@ def _oneline_dt(iso: str) -> str:
         return iso[:16] if len(iso) >= 16 else iso
 
 
+def _display_id(exp_id: str, full_id: bool) -> str:
+    """Return the experiment ID to display.
+
+    Args:
+        exp_id: Full experiment identifier.
+        full_id: Whether to show the full 16-character ID.
+
+    Returns:
+        The full ID if full_id is True, otherwise the first 8 characters.
+    """
+    return exp_id if full_id else exp_id[:8]
+
+
 def _list_rich(
     ctx: click.Context,
     scored: list[tuple[Experiment, dict[str, dict[str, float]], float | None]],
     sort_by: str | None,
     order: str,
     oneline: bool,
+    full_id: bool,
 ) -> None:
     """Render experiment list with Rich and pipe through a pager.
 
@@ -352,6 +372,7 @@ def _list_rich(
         sort_by: Metric name used for sorting, if any.
         order: Sort order string ("asc" or "desc").
         oneline: Whether to use compact one-line output.
+        full_id: Whether to display full 16-character IDs.
     """
     console = Console(force_terminal=True, record=True)
 
@@ -371,8 +392,10 @@ def _list_rich(
                 tags_display = ", ".join(exp.metadata.tags)
                 tags_part = f"[bold magenta][{tags_display}][/bold magenta]  "
 
+            disp_id = _display_id(exp.metadata.exp_id, full_id)
+            id_width = 16 if full_id else 8
             line = (
-                f"[yellow]{exp.metadata.exp_id:8}[/yellow]  "
+                f"[yellow]{disp_id:{id_width}}[/yellow]  "
                 f"[cyan]{date_str:16}[/cyan]  "
                 f"[{status_color}]{status_label:10}[/{status_color}]  "
                 f"{tags_part}"
@@ -394,8 +417,9 @@ def _list_rich(
             if exp.metadata.tags:
                 tags_display = ", ".join(exp.metadata.tags)
                 tag_part = f" [magenta](tag: {tags_display})[/magenta]"
+            disp_id = _display_id(exp.metadata.exp_id, full_id)
             console.print(
-                f"[yellow]experiment {exp.metadata.exp_id}[/yellow]"
+                f"[yellow]experiment {disp_id}[/yellow]"
                 f"{tag_part}"
                 f" [[{status_color}]{exp.metadata.status}[/{status_color}]]"
             )
@@ -436,6 +460,7 @@ def _list_plain(
     sort_by: str | None,
     order: str,
     oneline: bool,
+    full_id: bool,
 ) -> None:
     """Render experiment list as plain text.
 
@@ -444,6 +469,7 @@ def _list_plain(
         sort_by: Metric name used for sorting, if any.
         order: Sort order string ("asc" or "desc").
         oneline: Whether to use compact one-line output.
+        full_id: Whether to display full 16-character IDs.
     """
     if oneline:
         for exp, _best, score in scored:
@@ -456,8 +482,10 @@ def _list_plain(
                 tags_display = ", ".join(exp.metadata.tags)
                 tags_part = f"[{tags_display}]  "
 
+            disp_id = _display_id(exp.metadata.exp_id, full_id)
+            id_width = 16 if full_id else 8
             line = (
-                f"{exp.metadata.exp_id:8}  {date_str:16}  {status_label:10}  "
+                f"{disp_id:{id_width}}  {date_str:16}  {status_label:10}  "
                 f"{tags_part}{desc}"
             )
             if sort_by:
@@ -475,10 +503,8 @@ def _list_plain(
             if exp.metadata.tags:
                 tags_display = ", ".join(exp.metadata.tags)
                 tag_part = f" (tag: {tags_display})"
-            click.echo(
-                f"experiment {exp.metadata.exp_id}{tag_part} "
-                f"[{exp.metadata.status}]"
-            )
+            disp_id = _display_id(exp.metadata.exp_id, full_id)
+            click.echo(f"experiment {disp_id}{tag_part} [{exp.metadata.status}]")
             click.echo(f"Author: {getpass.getuser()}")
             click.echo(f"Date:   {dt}")
             click.echo("")
@@ -519,9 +545,10 @@ def finish(ctx: click.Context, exp_id: str, status: str, notes: str) -> None:
         raise click.ClickException(f"Experiment '{resolved_id}' not found.")
 
     console = _get_console(ctx)
+    short_id = exp.metadata.exp_id[:8]
     console.print(
         Panel(
-            f"[bold green]Experiment {exp_id} finished.[/bold green]\n"
+            f"[bold green]Experiment {short_id} finished.[/bold green]\n"
             f"Status: {status}\n"
             f"Summary written to: {exp.root / 'summary.md'}",
             title="Finish",
@@ -532,8 +559,13 @@ def finish(ctx: click.Context, exp_id: str, status: str, notes: str) -> None:
 
 @cli.command()
 @click.argument("exp_id")
+@click.option(
+    "--full-id",
+    is_flag=True,
+    help="Display full 16-character experiment ID",
+)
 @click.pass_context
-def show(ctx: click.Context, exp_id: str) -> None:
+def show(ctx: click.Context, exp_id: str, full_id: bool) -> None:
     """Display a detailed summary of a specific experiment.
 
     Shows metadata, configuration, and best metrics in a structured
@@ -550,7 +582,8 @@ def show(ctx: click.Context, exp_id: str) -> None:
     console = _get_console(ctx)
 
     meta_table = Table(show_header=False, box=None)
-    meta_table.add_row("[bold]ID[/bold]", exp.metadata.exp_id)
+    disp_id = _display_id(exp.metadata.exp_id, full_id)
+    meta_table.add_row("[bold]ID[/bold]", disp_id)
     meta_table.add_row("[bold]Status[/bold]", exp.metadata.status)
     meta_table.add_row("[bold]Description[/bold]", exp.metadata.description or "-")
     meta_table.add_row("[bold]Data Version[/bold]", exp.metadata.data_version or "-")
@@ -628,9 +661,8 @@ def tag_cmd(
         action = "added to"
 
     console = _get_console(ctx)
-    console.print(
-        f"[bold green]Tag '{tag_name}' {action} {resolved_id}.[/bold green]"
-    )
+    short_id = resolved_id[:8]
+    console.print(f"[bold green]Tag '{tag_name}' {action} {short_id}.[/bold green]")
 
 
 def main() -> None:

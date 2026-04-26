@@ -40,7 +40,7 @@ class ExMan:
         Returns:
             An 8-character hexadecimal string derived from a UUID.
         """
-        return uuid.uuid4().hex[:8]
+        return uuid.uuid4().hex[:16]
 
     def _folder_name(self, date_str: str, exp_id: str, tags_or_desc: str) -> str:
         """Build a safe directory name for an experiment.
