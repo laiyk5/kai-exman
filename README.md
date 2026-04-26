@@ -1,59 +1,160 @@
 # Kai-Exman
 
-tools for experiment management
+A filesystem-based experiment management CLI for machine learning workflows,
+inspired by Git. Kai-Exman treats the filesystem as its database, requiring
+no external services while providing git-log-style experiment tracking,
+structured metrics logging, and reproducibility snapshots.
 
-## MOTIVATION
+## Installation
 
-I found myself keep create ad-hoc tools in my machine learning projects, so I want a tool for experiment management that can be customized by my self. And I also want my code agent to use this, so I create it like a skill with a command line tool.
+```bash
+pip install kaiexman
+```
 
-## INSIGHTS
+Or install from source:
 
-### 实验设计
+```bash
+git clone <repository-url>
+cd kaiexman
+pip install -e ".[test]"
+```
 
-实验是需要预先设计的。
+## Quick Start
 
-- 训练型实验通常要将数据集划分为训练/验证/测试，测试绝对不可以用来调优，开发的时候就当他不存在。验证集是用来验证泛化性能的，可以根据验证集的结果来调整模型设计思路或超参数，但为避免模型设计过拟合验证集，应采用K折交叉验证，训练集则是真正用来喂给模型的。
-- 消融实验应该前置设计，要能在不同的实验之间获取知识，从而知道什么设计才是真正有用的
+Initialize a new experiment:
 
-实验不是一次就能成功的，成功之前会有很多失败实验，失败实验的结果也很重要，能从中总结经验。
+```bash
+kai-exman init --description "baseline training" --tags "baseline,v1"
+```
 
-### 实验记录
+Log metrics during training (via Python API):
 
-实验是多阶段的，而且有些阶段非常消耗资源（资源包括时间、物资），大消耗的阶段需要定时存档，存档有两个作用：用于分析、从存档继续实验，因此存档需要能够用于恢复实验状态。
+```python
+from kaiexman import ExMan
 
-实验记录是宝贵的，特别是消耗大的实验，要尽可能多的埋下数据记录点，包括日志，每一个模块输入输出，等等。
+exman = ExMan()
+exp = exman.init(description="my experiment")
+exp.log_metrics(step=0, values={"loss": 1.5, "acc": 0.3})
+exp.log_metrics(step=1, values={"loss": 0.8, "acc": 0.6})
+```
 
-这些数据最好是结构化的，最差的是半结构化的日志，其次是各个模块的输入输出。
+List experiments with git-log-style output:
 
-每次实验除了系统的输出，还要记录实验环境，实验设置，实验时间，还要有实验记录表需要填写。
+```bash
+kai-exman list
+kai-exman list --tag baseline --sort-by acc
+```
 
-实验应当是可复现的：
-- 代码要提交后再运行，每次实验应当记录当前的git commit hash并检查工作区是否有代码修改；
-- 数据要做Data Version Control，需要控制数据集的MD5摘要和版本号，以防数据被污染导致无法复现
+Show a specific experiment:
 
-实验分析：
-- Bad Case Report：要强制让实验生成一个Bad Case Report，导出那些表现最不佳的样本，从而知道为什么不行，从而启发下一轮设计
-- 显著性检验：当发现一个好方法的时候，用不同的随机种子多跑几轮，记录均值和标准差
+```bash
+kai-exman show <exp_id>
+```
 
-### 实验监控和处理
+Tag or untag an experiment:
 
-实验也需要监控，不能让实验在错误的方向白白消耗资源而不停止。好的监控方式就是从实验输出的结构化数据中用程序定时分析，并且在实验触发某些警告的时候自动kill并调用设定好的处理例程，通知人类，agent或自动处理器
+```bash
+kai-exman tag <exp_id> production
+kai-exman tag <exp_id> production -d
+```
 
-|**层级**|**内容**|**存储形式**|
-|---|---|---|
-|**元数据 (Metadata)**|实验ID、时间、Git Commit、User、实验目的描述|数据库 (MySQL/MongoDB) 或 README.md|
-|**配置 (Config)**|Learning Rate, Batch Size, Model Architecture, Seed|JSON / YAML 文件|
-|**指标 (Metrics)**|每一轮的 Loss, Accuracy, 耗时, 显存占用|**TensorBoard / Weights & Biases**|
-|**原始日志 (Logs)**|模块输入输出样本、错误堆栈、中间层特征分布|`.log` 文件 / 结构化采样文件|
-|**产物 (Artifacts)**|最佳模型、中间 Checkpoint、可视化图表|对象存储 (S3 / 磁盘阵列)|
+Finish an experiment and generate a summary:
 
-### 一个工程里的多实验管理
+```bash
+kai-exman finish <exp_id> --status success --notes "Best run so far"
+```
 
-一个工程里不止包含一种实验，比如有时候需要获取baseline结果，有时候需要测试各个LLM的延迟，有时候是运行主实验。但是每一次实验都需要有一个唯一的引用方法，能够迅速定位。
+## Motivation
 
-做工程的时候很容易就会飙到上百个实验，这时候需要建立一套语义化标签系统，而不仅仅是靠ID定位
+Machine learning projects generate hundreds of experiments. Ad-hoc tracking
+spreadsheets and manual note-taking break down at scale. Kai-Exman provides
+a rigorous, reproducible, and agent-friendly system where every experiment
+is a self-contained directory with metadata, configuration, metrics, and
+artifacts.
 
-参考：【项目名称】-【核心变体】-【主要超参数】-【日期】-【简短描述】，这样就能在回顾的时候一眼就知道这个实验在干什么
+The design philosophy is **Rigorous Flexibility**: unyielding standards for
+correctness and clarity, flexible enough to adapt to real-world needs.
 
-实验结束后，需要来一个强制的复盘小结，填写实验的总结，思考和下一步行动建议
+## Insights
 
+### Experiment Design
+
+Experiments must be designed before they are run.
+
+- **Training experiments** should split data into train / validation / test.
+The test set must never be used for tuning. Use the validation set to guide
+model design and hyperparameters. To avoid overfitting the validation set,
+use K-fold cross-validation.
+- **Ablation studies** should be planned in advance. Design experiments to
+extract knowledge across runs, isolating which design choices actually matter.
+
+Experiments are rarely successful on the first attempt. Failed experiments are
+valuable --- they provide the signal needed to improve the next iteration.
+
+### Experiment Recording
+
+Experiments are multi-stage, and some stages are resource-intensive (time,
+compute, materials). High-cost stages need periodic checkpointing for both
+analysis and resumption. Checkpoints must be capable of restoring full
+experiment state.
+
+Record as much structured data as possible: logs, module inputs and outputs,
+and intermediate artifacts. Structured data is ideal; semi-structured logs are
+the minimum acceptable form.
+
+Every experiment should capture:
+
+- Environment state (pip freeze, Git commit hash)
+- Experimental settings (hyperparameters, data version)
+- Timing and resource usage
+- A structured experiment record sheet
+
+Experiments must be **reproducible**:
+
+- Code should be committed before running. Each experiment records the current
+  Git commit hash and checks for uncommitted changes.
+- Data should be under version control. Record dataset MD5 hashes and version
+  numbers to prevent data corruption from breaking reproducibility.
+
+### Experiment Analysis
+
+- **Bad Case Report**: Every experiment should produce a Bad Case Report
+  exporting the worst-performing samples. Understanding why the model fails
+  informs the next design iteration.
+- **Significance Testing**: When a promising method is found, run multiple
+  seeds, record mean and standard deviation. A single good run may be noise.
+
+### Experiment Monitoring
+
+Experiments require active monitoring. A run heading in the wrong direction
+should be killed automatically rather than consuming resources indefinitely.
+Monitor structured output data programmatically, trigger alerts on anomalous
+patterns, and invoke predefined handler routines to notify humans or agents.
+
+| Layer | Content | Storage Form |
+| --- | --- | --- |
+| **Metadata** | Experiment ID, timestamp, Git commit, user, description | `metadata.json` |
+| **Config** | Learning rate, batch size, model architecture, seed | `config.yaml` |
+| **Metrics** | Per-step loss, accuracy, latency, memory usage | `metrics.jsonl` |
+| **Logs** | Module I/O samples, error traces, feature distributions | `.log` files |
+| **Artifacts** | Best model, checkpoints, visualizations | `artifacts/` directory |
+
+### Multi-Experiment Management
+
+A single project contains many experiment types: baselines, latency benchmarks,
+ablation studies, and primary experiments. Each experiment needs a unique,
+unambiguous reference for rapid lookup.
+
+At scale, semantic tags are essential. A naming convention such as
+`[project]-[variant]-[hyperparams]-[date]-[description]` allows a researcher to
+understand an experiment's purpose at a glance.
+
+After every experiment, a **mandatory post-mortem summary** is required:
+record results, insights, and concrete next-step recommendations.
+
+## Documentation
+
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** -- Engineering workflow, testing
+  standards, commit conventions, and governance.
+- **[docs/design/specs.md](docs/design/specs.md)** -- Technical architecture:
+  ID system, tag format, metadata schema, UI design rules, and API reference.
