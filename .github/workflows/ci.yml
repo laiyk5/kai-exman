@@ -26,6 +26,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[test]"
 
+      - name: Check dependency consistency
+        run: deptry src/
+
       - name: Run pytest
         run: pytest -v
 

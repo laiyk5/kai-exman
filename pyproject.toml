@@ -11,7 +11,7 @@ kai-exman = "kaiexman.cli:main"
 
 [project.optional-dependencies]
 docs = ["sphinx>=7.0", "sphinx-rtd-theme>=2.0", "myst-parser>=3.0"]
-test = ["pytest>=8.0", "interrogate>=1.5", "mypy>=1.5", "types-PyYAML>=6.0"]
+test = ["pytest>=8.0", "interrogate>=1.5", "mypy>=1.5", "types-PyYAML>=6.0", "deptry>=0.25"]
 dev = ["pre-commit>=3.0"]
 
 [tool.mypy]
@@ -25,3 +25,10 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 show_error_codes = true
 ignore_missing_imports = true
+
+[tool.deptry]
+ignore_notebooks = true
+optional_dependencies_dev_groups = ["test", "dev", "docs"]
+
+[tool.deptry.package_module_name_map]
+pre-commit = "pre_commit"

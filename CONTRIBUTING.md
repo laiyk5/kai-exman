@@ -42,6 +42,16 @@ Every module must have a top-level description. Every class must document its pu
 
 All code must pass `mypy --strict`. When adding a new third-party dependency, you must also add the corresponding type stubs package (e.g., `types-PyYAML` for `pyyaml`) to `[project.optional-dependencies]` test if one exists on PyPI.
 
+### Dependency Consistency
+
+`deptry` guards the dependency list. It checks for:
+
+- **Missing dependencies**: Imports used in code but not declared in `pyproject.toml`.
+- **Unused dependencies**: Packages declared in `pyproject.toml` but not imported in the codebase.
+- **Transitive dependencies**: Using a package that is only available because it is a dependency of another dependency.
+
+When adding a new runtime dependency, declare it in `[project.dependencies]`. When adding a development or testing tool, declare it in the appropriate optional dependency group (`test`, `dev`, or `docs`).
+
 For CLI-related logic, use `click.testing.CliRunner`. Example:
 
 ```python
