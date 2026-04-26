@@ -1,3 +1,9 @@
+"""Kai-Exman CLI entry point.
+
+Provides a Click-based command-line interface for experiment management
+with git-log-style output, smart TTY detection, and Rich terminal rendering.
+"""
+
 import getpass
 import os
 import sys
@@ -14,9 +20,24 @@ from kaiexman.manager import ExMan
 
 
 class AliasedGroup(click.Group):
+    """Click group with command aliases.
+
+    Attributes:
+        _aliases: Mapping of alias names to canonical command names.
+    """
+
     _aliases = {"log": "list"}
 
     def get_command(self, ctx, cmd_name):
+        """Resolve a command name, falling back to registered aliases.
+
+        Args:
+            ctx: Click context.
+            cmd_name: Command name provided by the user.
+
+        Returns:
+            The Click Command object, or None if not found.
+        """
         rv = super().get_command(ctx, cmd_name)
         if rv is not None:
             return rv
@@ -27,18 +48,42 @@ class AliasedGroup(click.Group):
 
 
 def _use_color(ctx: click.Context) -> bool:
+    """Determine whether color output should be enabled.
+
+    Args:
+        ctx: Click context containing CLI options.
+
+    Returns:
+        True if color is enabled and stdout is a TTY.
+    """
     if ctx.obj.get("no_color"):
         return False
     return sys.stdout.isatty()
 
 
 def _use_pager(ctx: click.Context) -> bool:
+    """Determine whether the pager should be used.
+
+    Args:
+        ctx: Click context containing CLI options.
+
+    Returns:
+        True if paging is enabled and stdout is a TTY.
+    """
     if ctx.obj.get("no_pager"):
         return False
     return sys.stdout.isatty()
 
 
 def _get_console(ctx: click.Context) -> Console:
+    """Build a Rich Console appropriate for the current context.
+
+    Args:
+        ctx: Click context containing CLI options.
+
+    Returns:
+        A configured Rich Console instance.
+    """
     return Console(
         force_terminal=_use_color(ctx),
         color_system="truecolor" if _use_color(ctx) else None,
@@ -48,7 +93,15 @@ def _get_console(ctx: click.Context) -> Console:
 def _resolve_exp_id(exman: ExMan, prefix: str) -> str:
     """Resolve a partial EXP_ID prefix to a full ID.
 
-    Raises click.ClickException if zero or multiple experiments match.
+    Args:
+        exman: ExMan manager instance.
+        prefix: Partial or full experiment ID.
+
+    Returns:
+        The full experiment ID if exactly one experiment matches.
+
+    Raises:
+        click.ClickException: If zero or multiple experiments match the prefix.
     """
     experiments = exman.list()
     matches = [e for e in experiments if e.metadata.exp_id.startswith(prefix)]
@@ -88,7 +141,7 @@ def cli(
     no_pager: bool,
     no_color: bool,
 ) -> None:
-    """Kai-Exman: Rigorous Experiment Management"""
+    """Kai-Exman: Rigorous Experiment Management."""
     ctx.ensure_object(dict)
     ctx.obj["path"] = path
     ctx.obj["no_pager"] = no_pager
@@ -101,7 +154,11 @@ def cli(
 @click.option("--config", "-c", help="Path to config YAML file")
 @click.pass_context
 def init(ctx: click.Context, description: str, tags: str, config: str | None) -> None:
-    """Initialize a new experiment"""
+    """Initialize a new experiment.
+
+    Creates a directory structure, captures Git state, and optionally
+    loads a YAML configuration file.
+    """
     cfg = None
     if config and Path(config).exists():
         with open(config, "r", encoding="utf-8") as f:
@@ -161,7 +218,11 @@ def list_cmd(
     top: int | None,
     oneline: bool,
 ) -> None:
-    """List experiments, optionally sorted by a metric"""
+    """List experiments, optionally sorted by a metric.
+
+    Displays experiments in a git-log-style format. In a TTY, uses
+    Rich for colors and a pager; otherwise outputs plain text.
+    """
     exman = ExMan(root=ctx.obj["path"])
     experiments = exman.list()
 
@@ -200,7 +261,15 @@ _STATUS_COLORS = {
 
 
 def _format_dt(iso: str) -> str:
-    """Convert ISO timestamp to git log style date string."""
+    """Convert an ISO timestamp to a git-log-style date string.
+
+    Args:
+        iso: ISO 8601 formatted timestamp string.
+
+    Returns:
+        Formatted date string (e.g., 'Mon Jan 01 12:00:00 2024 +0800'),
+        or the truncated input if parsing fails.
+    """
     try:
         dt = datetime.fromisoformat(iso)
         if dt.tzinfo is None:
@@ -211,7 +280,14 @@ def _format_dt(iso: str) -> str:
 
 
 def _params_line(config: dict) -> str:
-    """Return up to 3 key=value snippets from config."""
+    """Build a compact parameter summary string.
+
+    Args:
+        config: Configuration dictionary.
+
+    Returns:
+        Space-separated key=value pairs (up to 3 entries).
+    """
     if not config:
         return ""
     items = list(config.items())[:3]
@@ -219,6 +295,15 @@ def _params_line(config: dict) -> str:
 
 
 def _oneline_dt(iso: str) -> str:
+    """Convert an ISO timestamp to a compact date string.
+
+    Args:
+        iso: ISO 8601 formatted timestamp string.
+
+    Returns:
+        Formatted date string (e.g., '2024-01-01 12:00'),
+        or the truncated input if parsing fails.
+    """
     try:
         dt = datetime.fromisoformat(iso)
         return dt.strftime("%Y-%m-%d %H:%M")
@@ -233,6 +318,15 @@ def _list_rich(
     order: str,
     oneline: bool,
 ) -> None:
+    """Render experiment list with Rich and pipe through a pager.
+
+    Args:
+        ctx: Click context for color settings.
+        scored: List of (experiment, best_metrics, score) tuples.
+        sort_by: Metric name used for sorting, if any.
+        order: Sort order string ("asc" or "desc").
+        oneline: Whether to use compact one-line output.
+    """
     console = Console(force_terminal=True, record=True)
 
     if oneline:
@@ -309,6 +403,14 @@ def _list_plain(
     order: str,
     oneline: bool,
 ) -> None:
+    """Render experiment list as plain text.
+
+    Args:
+        scored: List of (experiment, best_metrics, score) tuples.
+        sort_by: Metric name used for sorting, if any.
+        order: Sort order string ("asc" or "desc").
+        oneline: Whether to use compact one-line output.
+    """
     if oneline:
         for exp, _best, score in scored:
             date_str = _oneline_dt(exp.metadata.timestamp)
@@ -362,7 +464,11 @@ def _list_plain(
 @click.option("--notes", "-n", default="", help="Post-mortem notes")
 @click.pass_context
 def finish(ctx: click.Context, exp_id: str, status: str, notes: str) -> None:
-    """Close an experiment and generate summary.md"""
+    """Close an experiment and generate summary.md.
+
+    Computes best metrics, updates status, and writes a Markdown summary
+    report to the experiment directory.
+    """
     exman = ExMan(root=ctx.obj["path"])
     resolved_id = _resolve_exp_id(exman, exp_id)
     exp = exman.finish(exp_id=resolved_id, status=status, notes=notes)
@@ -386,7 +492,11 @@ def finish(ctx: click.Context, exp_id: str, status: str, notes: str) -> None:
 @click.argument("exp_id")
 @click.pass_context
 def show(ctx: click.Context, exp_id: str) -> None:
-    """Display a detailed summary of a specific experiment"""
+    """Display a detailed summary of a specific experiment.
+
+    Shows metadata, configuration, and best metrics in a structured
+    panel layout.
+    """
     exman = ExMan(root=ctx.obj["path"])
     resolved_id = _resolve_exp_id(exman, exp_id)
     exp = exman.get(resolved_id)
@@ -449,4 +559,5 @@ def show(ctx: click.Context, exp_id: str) -> None:
 
 
 def main() -> None:
+    """CLI entry point."""
     cli()
