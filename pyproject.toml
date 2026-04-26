@@ -1,0 +1,14 @@
+[project]
+name = "kai-exman"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["pydantic>=2.0", "rich>=13.0", "pyyaml>=6.0", "click>=8.0"]
+
+[project.scripts]
+kai-exman = "kaiexman.cli:main"
+
+[project.optional-dependencies]
+docs = ["sphinx>=7.0", "sphinx-rtd-theme>=2.0", "myst-parser>=3.0"]
+test = ["pytest>=8.0"]
