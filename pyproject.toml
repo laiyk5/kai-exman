@@ -11,4 +11,5 @@ kai-exman = "kaiexman.cli:main"
 
 [project.optional-dependencies]
 docs = ["sphinx>=7.0", "sphinx-rtd-theme>=2.0", "myst-parser>=3.0"]
-test = ["pytest>=8.0"]
+test = ["pytest>=8.0", "interrogate>=1.5"]
+dev = ["pre-commit>=3.0"]
