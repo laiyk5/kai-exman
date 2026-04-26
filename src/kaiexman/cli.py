@@ -180,10 +180,12 @@ _STATUS_COLORS = {
 
 
 def _format_dt(iso: str) -> str:
-    """Convert ISO timestamp to human-readable date + time."""
+    """Convert ISO timestamp to git log style date string."""
     try:
         dt = datetime.fromisoformat(iso)
-        return dt.strftime("%Y-%m-%d %H:%M:%S")
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
+        return dt.strftime("%a %b %d %H:%M:%S %Y %z")
     except (ValueError, TypeError):
         return iso[:19] if len(iso) >= 19 else iso
 
@@ -228,25 +230,29 @@ def _list_rich(
         for exp, _best, score in scored:
             status_color = _STATUS_COLORS.get(exp.metadata.status, "white")
             dt = _format_dt(exp.metadata.timestamp)
-            desc = exp.metadata.description or "-"
+            desc = exp.metadata.description or ""
             tags_str = " ".join(exp.metadata.tags) if exp.metadata.tags else ""
             params = _params_line(exp.config)
 
-            # Header: ID + Status
+            # Header: experiment <id> [status]
             console.print(
-                f"[yellow]{exp.metadata.exp_id:8}[/yellow] "
-                f"([{status_color}]{exp.metadata.status}[/{status_color}])"
+                f"[yellow]experiment[/yellow] {exp.metadata.exp_id} "
+                f"[[{status_color}]{exp.metadata.status}[/{status_color}]]"
             )
 
-            # Author + Date
+            # Metadata
             author = getpass.getuser()
-            console.print(f"Author: {author} | Date: {dt}")
+            console.print(f"Author: {author}")
+            console.print(f"Date:   {dt}")
 
-            # Indented description
+            # Body: blank line, then indented description
+            console.print("")
             if desc:
-                console.print(f"\n    {desc}")
+                console.print(f"    {desc}")
+            else:
+                console.print("    [dim](No description provided)[/dim]")
 
-            # Footer: Tags + Params + optional sort score
+            # Footer: indented tags / params / score
             footer_parts = []
             if tags_str:
                 footer_parts.append(f"Tags: [magenta]{tags_str}[/magenta]")
@@ -256,9 +262,10 @@ def _list_rich(
                 score_str = f"{score:.4f}" if score is not None else "-"
                 footer_parts.append(f"[yellow]{sort_by}={score_str}[/yellow]")
             if footer_parts:
-                console.print(f"\n    {' | '.join(footer_parts)}")
+                console.print("")
+                console.print(f"    {' | '.join(footer_parts)}")
 
-            # Blank line separator
+            # Blank line between experiments
             console.print("")
 
     text = console.export_text(styles=True)
@@ -293,14 +300,18 @@ def _list_plain(
     else:
         for exp, _best, score in scored:
             dt = _format_dt(exp.metadata.timestamp)
-            desc = exp.metadata.description or "-"
+            desc = exp.metadata.description or ""
             tags_str = " ".join(exp.metadata.tags) if exp.metadata.tags else ""
             params = _params_line(exp.config)
 
-            click.echo(f"{exp.metadata.exp_id:8} ({exp.metadata.status})")
-            click.echo(f"Author: {getpass.getuser()} | Date: {dt}")
+            click.echo(f"experiment {exp.metadata.exp_id} [{exp.metadata.status}]")
+            click.echo(f"Author: {getpass.getuser()}")
+            click.echo(f"Date:   {dt}")
+            click.echo("")
             if desc:
-                click.echo(f"\n    {desc}")
+                click.echo(f"    {desc}")
+            else:
+                click.echo("    (No description provided)")
 
             footer_parts = []
             if tags_str:
@@ -311,7 +322,8 @@ def _list_plain(
                 score_str = f"{score:.4f}" if score is not None else "-"
                 footer_parts.append(f"{sort_by}={score_str}")
             if footer_parts:
-                click.echo(f"\n    {' | '.join(footer_parts)}")
+                click.echo("")
+                click.echo(f"    {' | '.join(footer_parts)}")
 
             click.echo("")
 
