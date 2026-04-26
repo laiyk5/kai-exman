@@ -1,4 +1,12 @@
 repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.12
+    hooks:
+      - id: ruff
+        args: [--fix, src/]
+      - id: ruff-format
+        args: [src/]
+
   - repo: https://github.com/fpgmaas/deptry
     rev: 0.25.1
     hooks:

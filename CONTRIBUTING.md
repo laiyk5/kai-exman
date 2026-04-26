@@ -52,6 +52,12 @@ All code must pass `mypy --strict`. When adding a new third-party dependency, yo
 
 When adding a new runtime dependency, declare it in `[project.dependencies]`. When adding a development or testing tool, declare it in the appropriate optional dependency group (`test`, `dev`, or `docs`).
 
+### Linting and Formatting
+
+All code must pass `ruff check` and `ruff format --check`. Ruff enforces Pyflakes (F), Pycodestyle (E, W), isort (I), Bugbear (B), and Pyupgrade (UP) rules with a line length of 88 characters.
+
+Run `ruff check --fix .` and `ruff format .` before committing to ensure compliance.
+
 For CLI-related logic, use `click.testing.CliRunner`. Example:
 
 ```python

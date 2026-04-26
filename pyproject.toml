@@ -12,7 +12,7 @@ kai-exman = "kaiexman.cli:main"
 [project.optional-dependencies]
 docs = ["sphinx>=7.0", "sphinx-rtd-theme>=2.0", "myst-parser>=3.0"]
 test = ["pytest>=8.0", "interrogate>=1.5", "mypy>=1.5", "types-PyYAML>=6.0", "deptry>=0.25"]
-dev = ["pre-commit>=3.0"]
+dev = ["pre-commit>=3.0", "ruff>=0.15"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -25,6 +25,14 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 show_error_codes = true
 ignore_missing_imports = true
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["F", "E", "W", "I", "B", "UP"]
+per-file-ignores = { "tests/**" = ["E402"] }
 
 [tool.deptry]
 ignore_notebooks = true
