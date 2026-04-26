@@ -135,6 +135,5 @@ def test_finish_nonexistent_experiment_returns_none(tmp_exman_path):
 
 def test_init_tags_with_empty_entries(tmp_exman_path):
     exman = ExMan(root=tmp_exman_path)
-    exp = exman.init(description="tags test", tags=["", "valid", "", "also_valid", ""])
-    assert "valid" in exp.metadata.tags
-    assert "" not in exp.metadata.tags
+    with pytest.raises(ValueError):
+        exman.init(description="tags test", tags=["", "valid", "", "also_valid", ""])

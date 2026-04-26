@@ -38,7 +38,7 @@ class ExMan:
         """Generate the next unique experiment identifier.
 
         Returns:
-            An 8-character hexadecimal string derived from a UUID.
+            A 16-character hexadecimal string derived from a UUID.
         """
         return uuid.uuid4().hex[:16]
 
@@ -54,7 +54,9 @@ class ExMan:
             A filesystem-safe directory name.
         """
         safe = "_".join(tags_or_desc.split())
-        safe = "".join(c for c in safe if c.isalnum() or c in "_-").rstrip("_")
+        safe = "".join(
+            c for c in safe if (c.isascii() and c.isalnum()) or c in "_-"
+        ).rstrip("_")
         return f"{date_str}_{exp_id}_{safe}" if safe else f"{date_str}_{exp_id}"
 
     def init(
@@ -88,7 +90,7 @@ class ExMan:
         (folder / "artifacts" / "checkpoints").mkdir(parents=True, exist_ok=True)
         (folder / "artifacts" / "plots").mkdir(parents=True, exist_ok=True)
 
-        tag_list = [t for t in (tags or []) if t]
+        tag_list = tags or []
         for tag in tag_list:
             validate_tag(tag)
         meta = Metadata(

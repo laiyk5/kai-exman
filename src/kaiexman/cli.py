@@ -289,6 +289,7 @@ _STATUS_COLORS = {
     "success": "green",
     "running": "blue",
     "failed": "red",
+    "finished": "green",
 }
 
 
