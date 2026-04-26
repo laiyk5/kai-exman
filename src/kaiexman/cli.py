@@ -198,6 +198,14 @@ def _params_line(config: dict) -> str:
     return " ".join(f"{k}={v}" for k, v in items)
 
 
+def _oneline_dt(iso: str) -> str:
+    try:
+        dt = datetime.fromisoformat(iso)
+        return dt.strftime("%Y-%m-%d %H:%M")
+    except (ValueError, TypeError):
+        return iso[:16] if len(iso) >= 16 else iso
+
+
 def _list_rich(
     ctx: click.Context,
     scored: list,
@@ -209,19 +217,21 @@ def _list_rich(
 
     if oneline:
         for exp, _best, score in scored:
-            date_str = exp.metadata.timestamp[:10]
+            date_str = _oneline_dt(exp.metadata.timestamp)
             status_color = _STATUS_COLORS.get(exp.metadata.status, "white")
-            desc = exp.metadata.description or "-"
-            tags_str = " ".join(exp.metadata.tags) if exp.metadata.tags else ""
+            status_label = exp.metadata.status.upper()
+
+            if exp.metadata.description:
+                desc = exp.metadata.description
+            else:
+                desc = "[dim](no description)[/dim]"
 
             line = (
-                f"[yellow]{exp.metadata.exp_id:8}[/yellow] "
-                f"[cyan]{date_str:10}[/cyan] "
-                f"([{status_color}]{exp.metadata.status:10}[/{status_color}]) "
+                f"[yellow]{exp.metadata.exp_id:8}[/yellow]  "
+                f"[cyan]{date_str:16}[/cyan]  "
+                f"[{status_color}]{status_label:10}[/{status_color}]  "
                 f"{desc}"
             )
-            if tags_str:
-                line += f" -- [magenta]{tags_str}[/magenta]"
             if sort_by:
                 score_str = f"{score:.4f}" if score is not None else "-"
                 line += f"  [{sort_by}={score_str}]"
@@ -281,18 +291,16 @@ def _list_plain(
 ) -> None:
     if oneline:
         for exp, _best, score in scored:
-            date_str = exp.metadata.timestamp[:10]
-            desc = exp.metadata.description or "-"
-            tags_str = " ".join(exp.metadata.tags) if exp.metadata.tags else ""
+            date_str = _oneline_dt(exp.metadata.timestamp)
+            status_label = exp.metadata.status.upper()
+            desc = exp.metadata.description or "(no description)"
 
             line = (
-                f"{exp.metadata.exp_id:8} "
-                f"{date_str:10} "
-                f"({exp.metadata.status:10}) "
+                f"{exp.metadata.exp_id:8}  "
+                f"{date_str:16}  "
+                f"{status_label:10}  "
                 f"{desc}"
             )
-            if tags_str:
-                line += f" -- {tags_str}"
             if sort_by:
                 score_str = f"{score:.4f}" if score is not None else "-"
                 line += f"  [{sort_by}={score_str}]"
