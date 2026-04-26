@@ -15,7 +15,7 @@ class Metadata(BaseModel):
     """Experiment metadata captured at initialization.
 
     Attributes:
-        exp_id: Unique 8-character hexadecimal experiment identifier.
+        exp_id: Unique 16-character hexadecimal experiment identifier.
         timestamp: ISO 8601 timestamp when the experiment was created.
         git_hash: Git commit hash at initialization time (empty if not a repo).
         git_dirty: Whether the working tree had uncommitted changes.

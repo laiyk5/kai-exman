@@ -1,6 +1,6 @@
 # Contributing to Kai-Exman
 
-Thank you for your interest in making Kai-Exman more rigorous. This document defines our engineering standards. We follow a philosophy of **Rigorous Flexibility**: unyielding standards for correctness and clarity, flexible enough to adapt to real-world needs.
+Thank you for your interest in making Kai-Exman more rigorous. This document defines our engineering workflow. For technical architecture and system specifications, see [docs/design/specs.md](docs/design/specs.md).
 
 ---
 
@@ -22,7 +22,23 @@ Thank you for your interest in making Kai-Exman more rigorous. This document def
 
 ---
 
-## 3. Rigorous Testing
+## 3. Environment Setup
+
+Install dependencies with `uv`:
+
+```bash
+uv sync
+```
+
+Or with pip:
+
+```bash
+pip install -e ".[test]"
+```
+
+---
+
+## 4. Rigorous Testing
 
 ### No Temporary Tests
 
@@ -40,7 +56,9 @@ Every module must have a top-level description. Every class must document its pu
 
 ### Type Safety
 
-All code must pass `mypy --strict`. When adding a new third-party dependency, you must also add the corresponding type stubs package (e.g., `types-PyYAML` for `pyyaml`) to `[project.optional-dependencies]` test if one exists on PyPI.
+All source code must pass `mypy --strict src/`.
+
+When adding a new third-party dependency, you must also add the corresponding type stubs package (e.g., `types-PyYAML` for `pyyaml`) to `[project.optional-dependencies]` test if one exists on PyPI.
 
 ### Dependency Consistency
 
@@ -74,27 +92,6 @@ def test_list_empty():
 ### Verification
 
 A task is only considered **Done** when `pytest` passes at 100%.
-
----
-
-## 4. UI & Aesthetics (The Git Soul)
-
-### Design Philosophy
-
-Follow Git's minimalist and industrial aesthetic. No unnecessary borders, no flashy gradients. Information density and clarity come first.
-
-### Adapting to the User
-
-Always check `sys.stdout.isatty()`.
-
-- **For Humans (TTY)**: Use `rich` for colors, panels, and tables. Use a pager (`less -R`) for long output.
-- **For Agents / Pipes**: Provide clean, plain text without ANSI codes or decorative framing.
-
-### Layout Standards
-
-- Use 4-space indentations for log-style multi-line output.
-- Use clear, color-coded headers (e.g., green for success, red for failure, blue for running).
-- Maintain consistent spacing: one blank line between entries in list views.
 
 ---
 
@@ -169,6 +166,14 @@ When a standard is overridden, the override is binding, but the rationale must b
 ### Documenting Technical Debt
 
 Intentional deviations from standards, shortcuts, or known imperfections must be documented as technical debt. Use inline `TODO` or `FIXME` comments for localized issues, and open a tracking issue for systemic debt. This ensures future contributors understand the context and can address it when priorities allow.
+
+---
+
+## 7. Technical Reference
+
+For detailed system specifications, including the ID system, tag format, metadata schema, and UI design rules, see:
+
+- **[docs/design/specs.md](docs/design/specs.md)** -- Architectural decisions and technical specifications.
 
 ---
 
