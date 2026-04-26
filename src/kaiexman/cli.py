@@ -45,6 +45,26 @@ def _get_console(ctx: click.Context) -> Console:
     )
 
 
+def _resolve_exp_id(exman: ExMan, prefix: str) -> str:
+    """Resolve a partial EXP_ID prefix to a full ID.
+
+    Raises click.ClickException if zero or multiple experiments match.
+    """
+    experiments = exman.list()
+    matches = [e for e in experiments if e.metadata.exp_id.startswith(prefix)]
+
+    if len(matches) == 1:
+        return matches[0].metadata.exp_id
+
+    if len(matches) == 0:
+        raise click.ClickException(f"No experiment found starting with '{prefix}'")
+
+    ids = ", ".join(e.metadata.exp_id for e in matches)
+    raise click.ClickException(
+        f"Ambiguous prefix '{prefix}' matches multiple experiments: {ids}"
+    )
+
+
 @click.group(cls=AliasedGroup)
 @click.option(
     "--path",
@@ -344,11 +364,11 @@ def _list_plain(
 def finish(ctx: click.Context, exp_id: str, status: str, notes: str) -> None:
     """Close an experiment and generate summary.md"""
     exman = ExMan(root=ctx.obj["path"])
-    exp = exman.finish(exp_id=exp_id, status=status, notes=notes)
+    resolved_id = _resolve_exp_id(exman, exp_id)
+    exp = exman.finish(exp_id=resolved_id, status=status, notes=notes)
 
     if exp is None:
-        click.echo(f"Experiment '{exp_id}' not found.", err=True)
-        raise click.Exit(1)
+        raise click.ClickException(f"Experiment '{resolved_id}' not found.")
 
     console = _get_console(ctx)
     console.print(
@@ -368,11 +388,11 @@ def finish(ctx: click.Context, exp_id: str, status: str, notes: str) -> None:
 def show(ctx: click.Context, exp_id: str) -> None:
     """Display a detailed summary of a specific experiment"""
     exman = ExMan(root=ctx.obj["path"])
-    exp = exman.get(exp_id)
+    resolved_id = _resolve_exp_id(exman, exp_id)
+    exp = exman.get(resolved_id)
 
     if exp is None:
-        click.echo(f"Experiment '{exp_id}' not found.", err=True)
-        raise click.Exit(1)
+        raise click.ClickException(f"Experiment '{resolved_id}' not found.")
 
     best_metrics = exp.compute_best_metrics()
     console = _get_console(ctx)
