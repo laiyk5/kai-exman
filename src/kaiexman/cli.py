@@ -387,13 +387,17 @@ def _list_rich(
             status_color = _STATUS_COLORS.get(exp.metadata.status, "white")
             dt = _format_dt(exp.metadata.timestamp)
             desc = exp.metadata.description or ""
-            tags_str = " ".join(exp.metadata.tags) if exp.metadata.tags else ""
             params = _params_line(exp.config)
 
-            # Header: experiment <id> [status]
+            # Header: experiment <hash> (tag: ...) [status]
+            tag_part = ""
+            if exp.metadata.tags:
+                tags_display = ", ".join(exp.metadata.tags)
+                tag_part = f" [magenta](tag: {tags_display})[/magenta]"
             console.print(
-                f"[yellow]experiment[/yellow] {exp.metadata.exp_id} "
-                f"[[{status_color}]{exp.metadata.status}[/{status_color}]]"
+                f"[yellow]experiment {exp.metadata.exp_id}[/yellow]"
+                f"{tag_part}"
+                f" [[{status_color}]{exp.metadata.status}[/{status_color}]]"
             )
 
             # Metadata
@@ -408,10 +412,8 @@ def _list_rich(
             else:
                 console.print("    [dim](No description provided)[/dim]")
 
-            # Footer: indented tags / params / score
+            # Footer: indented params / score
             footer_parts = []
-            if tags_str:
-                footer_parts.append(f"Tags: [magenta]{tags_str}[/magenta]")
             if params:
                 footer_parts.append(f"Params: [blue]{params}[/blue]")
             if sort_by:
@@ -466,10 +468,17 @@ def _list_plain(
         for exp, _best, score in scored:
             dt = _format_dt(exp.metadata.timestamp)
             desc = exp.metadata.description or ""
-            tags_str = " ".join(exp.metadata.tags) if exp.metadata.tags else ""
             params = _params_line(exp.config)
 
-            click.echo(f"experiment {exp.metadata.exp_id} [{exp.metadata.status}]")
+            # Header
+            tag_part = ""
+            if exp.metadata.tags:
+                tags_display = ", ".join(exp.metadata.tags)
+                tag_part = f" (tag: {tags_display})"
+            click.echo(
+                f"experiment {exp.metadata.exp_id}{tag_part} "
+                f"[{exp.metadata.status}]"
+            )
             click.echo(f"Author: {getpass.getuser()}")
             click.echo(f"Date:   {dt}")
             click.echo("")
@@ -479,8 +488,6 @@ def _list_plain(
                 click.echo("    (No description provided)")
 
             footer_parts = []
-            if tags_str:
-                footer_parts.append(f"Tags: {tags_str}")
             if params:
                 footer_parts.append(f"Params: {params}")
             if sort_by:
