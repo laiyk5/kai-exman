@@ -32,7 +32,11 @@ Do not rely on ad-hoc scripts like `tmp_test.py` for final verification.
 
 Every feature or bug fix must be accompanied by a formal test case in the `tests/` directory.
 
-### CLI Testing
+### Docstrings
+
+No PR or feature will be accepted without complete Google-style docstrings.
+
+Every module must have a top-level description. Every class must document its purpose and attributes. Every function and method must document its `Args`, `Returns`, and potential `Raises`.
 
 For CLI-related logic, use `click.testing.CliRunner`. Example:
 
