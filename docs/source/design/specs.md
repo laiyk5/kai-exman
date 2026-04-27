@@ -82,6 +82,8 @@ class Metadata(BaseModel):
     data_version: str = ""               # Data version or hash for reproducibility
     description: str = ""                # Human-readable description
     status: str = "running"              # Current status: running, success, failed, aborted
+    finished_at: str = ""               # ISO timestamp when the lab record was sealed
+    locked: bool = False                 # True once finish() seals the record
 ```
 
 ### Status Lifecycle
@@ -98,8 +100,20 @@ Experiments transition through the following statuses:
 `finish()` **auto-determines** status from the last attempt's `exit_code`. It does **not** accept an arbitrary status string. The state machine is enforced:
 
 - `finish()` raises `RuntimeError` if the experiment has **no attempts**.
+- `finish()` raises `LockedExperimentError` if the experiment has already been **sealed**.
 - `resume()` raises `LockedExperimentError` if the experiment is already in a **terminal state** (`success`, `failed`, or `aborted`).
 - Terminal experiments are immutable; create a new iteration (Case B) to evolve them.
+
+### Lab Scribe Protocol
+
+When an experiment reaches a terminal state, it is **sealed** by the Lab Scribe protocol:
+
+1. `finished_at` is set to the current ISO 8601 timestamp.
+2. `locked` is set to `True`.
+3. `metadata.json` is written with `force=True` (bypassing the lock check).
+4. All subsequent calls to `write_metadata()`, `add_tag()`, `remove_tag()`, or `update_status()` on this experiment raise `LockedExperimentError`.
+
+This ensures the lab record is immutable once sealed, guaranteeing audit trail integrity.
 
 ### Git Dirty Semantics
 
@@ -405,7 +419,9 @@ Runs `pip list --format=freeze` and writes the output to `env.txt`. If pip is un
 | Non-serializable bad case | `TypeError` | Standard `json.dumps` failure. |
 | Missing experiment for `finish` | `ValueError` | `Experiment '<id>' not found` |
 | Finish with no attempts | `RuntimeError` | `Experiment '<id>' has no attempts...` |
-| Resume locked experiment | `LockedExperimentError` | `Experiment <id> is already in a terminal state...` |
+| Finish already sealed | `LockedExperimentError` | `Experiment <id> is already sealed...` |
+| Resume locked experiment | `LockedExperimentError` | `Experiment <id> is already sealed...` |
+| Modify locked metadata | `LockedExperimentError` | `Experiment <id> is locked...` |
 
 ---
 

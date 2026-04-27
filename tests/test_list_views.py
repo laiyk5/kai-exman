@@ -197,6 +197,26 @@ def test_oneline_shows_inherited_experiments(tmp_exman_path, monkeypatch):
     assert parent.metadata.description in result.output
 
 
+def test_oneline_shows_finished_at_for_terminal(tmp_exman_path):
+    exman = ExMan(root=tmp_exman_path)
+    exp = exman.init(description="finished_exp")
+    from kaiexman.models import Attempt
+    exp.metadata.attempts.append(
+        Attempt(sequence=1, status="running", exit_code=0)
+    )
+    exp.write_metadata()
+    exman.finish(exp.metadata.exp_id)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.cli, ["--path", tmp_exman_path, "list", "--oneline"]
+    )
+    assert result.exit_code == 0
+    assert "SUCCESS" in result.output
+    # The finished_at timestamp should appear (formatted as _oneline_dt)
+    assert "→" in result.output
+
+
 # ---------------------------------------------------------------------------
 # Tree view
 # ---------------------------------------------------------------------------

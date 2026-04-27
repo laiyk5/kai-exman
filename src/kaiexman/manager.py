@@ -17,14 +17,7 @@ from typing import Any, List, Tuple
 
 from kaiexman.config import ConfigManager
 from kaiexman.experiment import Experiment, validate_group, validate_tag
-from kaiexman.models import Attempt, Metadata
-
-
-class LockedExperimentError(RuntimeError):
-    """Raised when an operation is requested on an experiment that has
-    already reached a terminal state.
-    """
-
+from kaiexman.models import Attempt, LockedExperimentError, Metadata
 
 _TERMINAL_STATUSES: set[str] = {"success", "failed", "aborted"}
 
@@ -396,6 +389,13 @@ class ExMan:
         if exp is None:
             raise ValueError(f"Experiment '{exp_id}' not found")
 
+        if exp.metadata.locked or exp.metadata.status in _TERMINAL_STATUSES:
+            raise LockedExperimentError(
+                f"Experiment {exp_id} is already sealed (status: "
+                f"{exp.metadata.status}, finished_at: {exp.metadata.finished_at}). "
+                "Use 'kai-exman run --resume <id>' to start a new record."
+            )
+
         if not exp.metadata.attempts:
             raise RuntimeError(
                 f"Experiment '{exp_id}' has no attempts. "
@@ -416,7 +416,11 @@ class ExMan:
 
         best_metrics = exp.compute_best_metrics()
         exp.write_summary(status=status, notes=notes, best_metrics=best_metrics)
-        exp.update_status(status)
+
+        exp.metadata.status = status
+        exp.metadata.finished_at = datetime.now().isoformat()
+        exp.metadata.locked = True
+        exp.write_metadata(force=True)
         self._update_index(exp, "add")
         return exp
 
@@ -553,12 +557,12 @@ class ExMan:
             and current_hash == parent.metadata.git_hash
             and not current_dirty
         ):
-            if parent.metadata.status in _TERMINAL_STATUSES:
+            if parent.metadata.locked or parent.metadata.status in _TERMINAL_STATUSES:
                 raise LockedExperimentError(
-                    f"Experiment {parent.metadata.exp_id} is already in a "
-                    f"terminal state ({parent.metadata.status}). Use --resume "
-                    "to create a new iteration or delete the existing results "
-                    "to re-run."
+                    f"Experiment {parent.metadata.exp_id} is already sealed "
+                    f"(status: {parent.metadata.status}, "
+                    f"finished_at: {parent.metadata.finished_at}). "
+                    "Use 'kai-exman run --resume <id>' to start a new record."
                 )
             if group is not None and group != parent.metadata.group:
                 warnings.warn(

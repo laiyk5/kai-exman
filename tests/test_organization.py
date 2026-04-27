@@ -386,7 +386,7 @@ def test_resume_blocks_terminal_success(tmp_exman_path, monkeypatch):
         exman, "_current_git_state", lambda: (parent_hash, False)
     )
 
-    with pytest.raises(LockedExperimentError, match="terminal state"):
+    with pytest.raises(LockedExperimentError, match="sealed"):
         exman.resume(parent.metadata.exp_id)
 
 
@@ -407,7 +407,7 @@ def test_resume_blocks_terminal_failed(tmp_exman_path, monkeypatch):
         exman, "_current_git_state", lambda: (parent_hash, False)
     )
 
-    with pytest.raises(LockedExperimentError, match="terminal state"):
+    with pytest.raises(LockedExperimentError, match="sealed"):
         exman.resume(parent.metadata.exp_id)
 
 
@@ -460,3 +460,59 @@ def test_index_includes_status(tmp_exman_path):
     assert index is not None
     entry = index["experiments"][exp.metadata.exp_id]
     assert entry["status"] == "success"
+
+
+# ---------------------------------------------------------------------------
+# Lab Scribe protocol: terminal locking and finished_at
+# ---------------------------------------------------------------------------
+
+
+def test_finish_sets_finished_at_and_locked(tmp_exman_path):
+    exman = ExMan(root=tmp_exman_path)
+    exp = exman.init(description="test")
+    from kaiexman.models import Attempt
+    exp.metadata.attempts.append(
+        Attempt(sequence=1, status="running", exit_code=0)
+    )
+    exp.write_metadata()
+
+    finished = exman.finish(exp.metadata.exp_id)
+    assert finished.metadata.status == "success"
+    assert finished.metadata.locked is True
+    assert finished.metadata.finished_at != ""
+
+    # Reload from disk and verify persistence
+    reloaded = exman.get(exp.metadata.exp_id)
+    assert reloaded is not None
+    assert reloaded.metadata.locked is True
+    assert reloaded.metadata.finished_at == finished.metadata.finished_at
+
+
+def test_finish_blocks_on_already_locked(tmp_exman_path):
+    exman = ExMan(root=tmp_exman_path)
+    exp = exman.init(description="test")
+    from kaiexman.models import Attempt
+    exp.metadata.attempts.append(
+        Attempt(sequence=1, status="running", exit_code=0)
+    )
+    exp.write_metadata()
+    exman.finish(exp.metadata.exp_id)
+
+    with pytest.raises(LockedExperimentError, match="sealed"):
+        exman.finish(exp.metadata.exp_id)
+
+
+def test_write_metadata_blocks_when_locked(tmp_exman_path):
+    exman = ExMan(root=tmp_exman_path)
+    exp = exman.init(description="test")
+    from kaiexman.models import Attempt
+    exp.metadata.attempts.append(
+        Attempt(sequence=1, status="running", exit_code=0)
+    )
+    exp.write_metadata()
+    exman.finish(exp.metadata.exp_id)
+
+    reloaded = exman.get(exp.metadata.exp_id)
+    assert reloaded is not None
+    with pytest.raises(LockedExperimentError, match="locked"):
+        reloaded.add_tag("forbidden")

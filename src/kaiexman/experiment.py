@@ -15,7 +15,7 @@ from typing import Any
 
 import yaml
 
-from kaiexman.models import Metadata, MetricsRow
+from kaiexman.models import LockedExperimentError, Metadata, MetricsRow
 
 _TAG_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 _GROUP_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
@@ -171,8 +171,21 @@ class Experiment:
         except (subprocess.CalledProcessError, FileNotFoundError):
             return "", False
 
-    def write_metadata(self) -> None:
-        """Write metadata to metadata.json, capturing Git state."""
+    def write_metadata(self, force: bool = False) -> None:
+        """Write metadata to metadata.json, capturing Git state.
+
+        Args:
+            force: If True, bypass the locked check. Used by finish().
+
+        Raises:
+            LockedExperimentError: If the experiment has been sealed and
+                force is False.
+        """
+        if self.metadata.locked and not force:
+            raise LockedExperimentError(
+                f"Experiment {self.metadata.exp_id} is locked. "
+                "The lab record has been sealed and cannot be modified."
+            )
         git_hash, git_dirty = self._git_info(critical_paths=self.critical_paths)
         self.metadata.git_hash = git_hash
         self.metadata.git_dirty = git_dirty

@@ -11,6 +11,12 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+class LockedExperimentError(RuntimeError):
+    """Raised when an operation is requested on an experiment that has
+    already reached a terminal state and been sealed.
+    """
+
+
 class Attempt(BaseModel):
     """A single execution attempt within an experiment.
 
@@ -59,6 +65,8 @@ class Metadata(BaseModel):
     parent_id: str = ""
     attempts: list[Attempt] = Field(default_factory=list)
     group: str = "default"
+    finished_at: str = ""
+    locked: bool = False
 
 
 class MetricsRow(BaseModel):

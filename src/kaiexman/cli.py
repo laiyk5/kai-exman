@@ -22,6 +22,7 @@ from rich.console import Console
 from kaiexman.config import ConfigManager
 from kaiexman.experiment import Experiment, validate_group, validate_tag
 from kaiexman.manager import ExMan
+from kaiexman.models import LockedExperimentError
 
 
 class AliasedGroup(click.Group):
@@ -305,13 +306,16 @@ def run(
 
     if resume:
         resolved_id = _resolve_exp_id(exman, resume)
-        exp, is_new, attempt_num = exman.resume(
-            exp_id=resolved_id,
-            description=description,
-            tags=tag_list or None,
-            config=cfg,
-            group=group,
-        )
+        try:
+            exp, is_new, attempt_num = exman.resume(
+                exp_id=resolved_id,
+                description=description,
+                tags=tag_list or None,
+                config=cfg,
+                group=group,
+            )
+        except LockedExperimentError as exc:
+            raise click.ClickException(str(exc)) from exc
     else:
         if group is not None:
             _validate_group(group)
@@ -755,10 +759,16 @@ def _build_oneline_lines(
             tags = ", ".join(exp.metadata.tags)
             tags_part = f"[magenta]{tags}[/magenta]  "
 
+        finished = ""
+        if exp.metadata.finished_at:
+            finished = _oneline_dt(exp.metadata.finished_at)
+            finished = f"[dim]→ {finished:16}[/dim]  "
+
         line = (
             f"[yellow]{disp_id:{id_width}}[/yellow]  "
             f"[cyan]{dt:16}[/cyan]  "
             f"[{status_color}]{status_label:8}[/{status_color}]  "
+            f"{finished}"
             f"[cyan]{exp.metadata.group:10}[/cyan]  "
             f"{tags_part}{desc}"
         )
@@ -856,6 +866,8 @@ def finish(ctx: click.Context, exp_id: str, notes: str) -> None:
     except RuntimeError as exc:
         raise click.ClickException(str(exc)) from exc
     except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    except LockedExperimentError as exc:
         raise click.ClickException(str(exc)) from exc
 
     short_len = cfg_mgr.get("short_id_length", 8)
