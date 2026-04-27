@@ -23,55 +23,113 @@ pip install -e ".[test]"
 
 ## Quick Start
 
-Initialize a new experiment:
+### Initialize a new experiment
 
 ```bash
-kai-exman init --description "baseline training" --tags "baseline,v1"
+kai-exman init --description "baseline training" --tags "baseline,v1" --group train
 ```
 
-Log metrics during training (via Python API):
+### Run a command inside an experiment context
+
+```bash
+# Fresh experiment
+kai-exman run --description "training run" -- python train.py
+
+# Resume an experiment (automatic Case A / Case B detection)
+kai-exman run --resume <exp_id> -- python train.py
+```
+
+When resuming, Kai-Exman compares the current Git state against the parent experiment:
+
+- **Case A (Retry)**: Same commit, clean workspace. Appends a new attempt to the existing experiment.
+- **Case B (Evolution)**: Different commit or dirty workspace. Creates a new experiment with the old one as its parent.
+
+### Track metrics and artifacts (Python API)
 
 ```python
 from kaiexman import ExMan
 
 exman = ExMan()
-exp = exman.init(description="my experiment")
+exp = exman.init(description="my experiment", group="train")
+
+# Log metrics
 exp.log_metrics(step=0, values={"loss": 1.5, "acc": 0.3})
 exp.log_metrics(step=1, values={"loss": 0.8, "acc": 0.6})
+
+# Save a checkpoint
+exp.save_artifact("/tmp/best_model.pt", name="best_model.pt")
+
+# Get best metrics seen so far
+best = exp.compute_best_metrics()
+# {"loss": {"max": 1.5, "min": 0.8}, "acc": {"max": 0.6, "min": 0.3}}
+
+# Finish the experiment (status auto-determined from last attempt)
+finished = exman.finish(exp.metadata.exp_id, notes="Solid baseline.")
 ```
 
-List experiments with git-log-style output:
+### List and filter experiments
 
 ```bash
+# Default log view
 kai-exman list
-kai-exman list --tag baseline --sort-by acc
+
+# Compact one-line view
+kai-exman list --oneline
+
+# Lineage tree view (shows parent/child relationships)
+kai-exman list --tree
+
+# Filter by tag or group
+kai-exman list --tag baseline --group train
+
+# Sort by metric, creation time, or group
+kai-exman list --sort-by acc --order desc
+kai-exman list --sort created --order desc
+
+# Show full 16-character IDs
+kai-exman list --full-id
 ```
 
-Show a specific experiment:
+### Show experiment details
 
 ```bash
 kai-exman show <exp_id>
+kai-exman show --full-id <exp_id>
 ```
 
-Tag or untag an experiment:
+### Move experiments between groups
+
+```bash
+kai-exman move <exp_id> eval
+```
+
+### Tag or untag an experiment
 
 ```bash
 kai-exman tag <exp_id> production
 kai-exman tag <exp_id> production -d
 ```
 
-Remove an experiment (moved to trash for safety):
+### Remove an experiment (moved to trash for safety)
 
 ```bash
 kai-exman rm <exp_id>
 kai-exman rm --clear-trash  # permanently empty trash
 ```
 
-Finish an experiment and generate a summary:
+### Finish an experiment and generate a summary
 
 ```bash
-kai-exman finish <exp_id> --status success --notes "Best run so far"
+kai-exman finish <exp_id> --notes "Best run so far"
 ```
+
+Status is determined automatically from the last attempt's exit code:
+
+| Exit code | Status |
+| --- | --- |
+| `0` | `success` |
+| Non-zero | `failed` |
+| `None` (stopped) | `aborted` |
 
 ## Motivation
 
