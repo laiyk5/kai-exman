@@ -281,7 +281,9 @@ class ExMan:
                 with config_path.open("r", encoding="utf-8") as f:
                     config = yaml.safe_load(f)
             experiments.append(
-                Experiment(root=path, metadata=meta, config=config)
+                Experiment(
+                    root=path, metadata=meta, config=config, exman=self
+                )
             )
         return experiments
 
@@ -480,6 +482,7 @@ class ExMan:
             metadata=meta,
             config=merged_config,
             critical_paths=self.config.get("critical_paths"),
+            exman=self,
         )
         exp.write_metadata()
         if merged_config is not None:
@@ -497,6 +500,7 @@ class ExMan:
         exp_id: str,
         command: list[str],
         data_path: str = "",
+        reason: str = "",
     ) -> tuple[Experiment, int]:
         """Execute a command on an existing experiment.
 
@@ -553,7 +557,7 @@ class ExMan:
         new_attempt = Attempt(
             sequence=attempt_num,
             status="running",
-            reason=f"run_{attempt_num}",
+            reason=reason or f"run_{attempt_num}",
             command=list(command),
         )
         exp.metadata.attempts.append(new_attempt)
@@ -598,6 +602,7 @@ class ExMan:
         exp_id: str,
         command: list[str],
         data_path: str = "",
+        reason: str = "",
     ) -> tuple[Experiment, int]:
         """Retry a running experiment by appending a new attempt.
 
@@ -607,6 +612,7 @@ class ExMan:
             exp_id: Full experiment identifier.
             command: Command and arguments to execute.
             data_path: Optional path to a dataset file or directory.
+            reason: Optional reason for this retry attempt.
 
         Returns:
             Tuple of (experiment, exit_code).
@@ -627,7 +633,7 @@ class ExMan:
                 f"Experiment '{exp_id}' is finished. "
                 "retry() can only append attempts to running experiments."
             )
-        return self.run(exp_id, command, data_path=data_path)
+        return self.run(exp_id, command, data_path=data_path, reason=reason)
 
     def finish(
         self,
@@ -697,6 +703,46 @@ class ExMan:
         self._update_index(exp, "add")
         return exp
 
+    def abort(self, exp_id: str, notes: str = "") -> Experiment:
+        """Abort an experiment and seal the record.
+
+        Sets the last attempt's exit_code to None and status to "aborted",
+        then seals the experiment via ``finish()`` with a default summary.
+
+        Args:
+            exp_id: Full experiment identifier.
+            notes: Optional post-mortem notes for the summary file.
+
+        Returns:
+            The aborted Experiment instance.
+
+        Raises:
+            ValueError: If the experiment is not found.
+            RuntimeError: If the experiment has no attempts.
+            LockedExperimentError: If the experiment is already sealed.
+        """
+        exp = self.get(exp_id)
+        if exp is None:
+            raise ValueError(f"Experiment '{exp_id}' not found")
+        if not exp.metadata.attempts:
+            raise RuntimeError(
+                f"Experiment '{exp_id}' has no attempts. Cannot abort."
+            )
+        if exp.metadata.locked or exp.metadata.status in _TERMINAL_STATUSES:
+            raise LockedExperimentError(
+                f"Experiment {exp_id} is already sealed. "
+                "Use init() with parent_ids to create a child record."
+            )
+
+        last = exp.metadata.attempts[-1]
+        last.exit_code = None
+        last.status = "aborted"
+        exp.write_metadata()
+
+        return self.finish(
+            exp_id=exp_id, notes=notes, summary="Aborted by user."
+        )
+
     def list(self, group: str | None = None) -> List[Experiment]:
         """List all experiments under the root directory.
 
@@ -751,7 +797,9 @@ class ExMan:
 
                         with config_path.open("r", encoding="utf-8") as f:
                             config = yaml.safe_load(f)
-                    return Experiment(root=path, metadata=meta, config=config)
+                    return Experiment(
+                        root=path, metadata=meta, config=config, exman=self
+                    )
             # Stale index entry — rebuild and fall through
             index = self.rebuild_index()
 

@@ -470,11 +470,13 @@ def _resolve_run_args(
 @cli.command()
 @click.argument("args", nargs=-1, required=True)
 @click.option("--data-path", help="Dataset path for automatic hash")
+@click.option("--reason", help="Reason for this attempt (e.g. 'retry after OOM')")
 @click.pass_context
 def run(
     ctx: click.Context,
     args: tuple[str, ...],
     data_path: str | None,
+    reason: str,
 ) -> None:
     """Execute a command on an existing experiment.
 
@@ -497,7 +499,7 @@ def run(
 
     try:
         _exp, returncode = exman.run(
-            resolved_id, command, data_path=data_path or ""
+            resolved_id, command, data_path=data_path or "", reason=reason
         )
     except (ValueError, RuntimeError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -1086,29 +1088,9 @@ def abort(ctx: click.Context, exp_id: str | None, notes: str) -> None:
     exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
     resolved_id = _resolve_exp_id_or_default(exman, exp_id)
 
-    exp = exman.get(resolved_id)
-    if exp is None:
-        raise click.ClickException(f"Experiment '{resolved_id}' not found")
-    if not exp.metadata.attempts:
-        raise click.ClickException(
-            f"Experiment '{resolved_id}' has no attempts. Cannot abort."
-        )
-    if exp.metadata.locked:
-        raise click.ClickException(
-            f"Experiment {resolved_id} is already sealed. "
-            "Use 'kai-exman run --inherit <id>' to create a child record."
-        )
-
-    last = exp.metadata.attempts[-1]
-    last.exit_code = None
-    last.status = "aborted"
-    exp.write_metadata()
-
     try:
-        finished = exman.finish(
-            exp_id=resolved_id, notes=notes, summary="Aborted by user."
-        )
-    except RuntimeError as exc:
+        finished = exman.abort(exp_id=resolved_id, notes=notes)
+    except (ValueError, RuntimeError) as exc:
         raise click.ClickException(str(exc)) from exc
     except LockedExperimentError as exc:
         raise click.ClickException(str(exc)) from exc

@@ -11,13 +11,17 @@ import os
 import re
 import shutil
 import subprocess
+import weakref
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
 from kaiexman.models import LockedExperimentError, Metadata, MetricsRow
+
+if TYPE_CHECKING:
+    from kaiexman.manager import ExMan
 
 _TAG_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 _GROUP_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
@@ -86,6 +90,7 @@ class Experiment:
         metadata: Metadata,
         config: dict[str, Any] | None = None,
         critical_paths: list[str] | None = None,
+        exman: "ExMan | None" = None,
     ) -> None:
         """Initialize an Experiment instance.
 
@@ -95,11 +100,13 @@ class Experiment:
             config: Optional configuration dictionary.
             critical_paths: Paths to check for uncommitted changes
                 when capturing Git state. Uses built-in defaults if None.
+            exman: Optional ExMan manager reference for convenience methods.
         """
         self.root = root
         self.metadata = metadata
         self.config = config or {}
         self.critical_paths = critical_paths
+        self._exman_ref = weakref.ref(exman) if exman is not None else None
         self._metrics_path = root / "metrics.jsonl"
         self._bad_cases_path = root / "artifacts" / "bad_cases.json"
         self._diff_patch_path = root / "code.patch"
@@ -542,3 +549,86 @@ class Experiment:
 <!-- TODO: Fill in your insights and next actions -->
 """
         summary_path.write_text(content, encoding="utf-8")
+
+    # ------------------------------------------------------------------
+    # Convenience methods (delegate to ExMan)
+    # ------------------------------------------------------------------
+
+    def _exman(self) -> "ExMan | None":
+        """Resolve the weak manager reference."""
+        if self._exman_ref is None:
+            return None
+        return self._exman_ref()
+
+    def run(
+        self, command: list[str], data_path: str = "", reason: str = ""
+    ) -> tuple["Experiment", int]:
+        """Execute a command on this experiment.
+
+        Delegates to ``ExMan.run()``.
+
+        Args:
+            command: Command and arguments to execute.
+            data_path: Optional path to a dataset for automatic hash.
+            reason: Optional reason for this attempt.
+
+        Returns:
+            Tuple of (experiment, exit_code).
+
+        Raises:
+            RuntimeError: If the experiment has no manager reference.
+        """
+        exman = self._exman()
+        if exman is None:
+            raise RuntimeError(
+                "Experiment has no manager reference. "
+                "Use ExMan.run() directly."
+            )
+        return exman.run(
+            self.metadata.exp_id, command, data_path=data_path, reason=reason
+        )
+
+    def finish(self, notes: str = "", summary: str = "") -> "Experiment":
+        """Finalize this experiment.
+
+        Delegates to ``ExMan.finish()``.
+
+        Args:
+            notes: Optional additional post-mortem notes.
+            summary: Mandatory conclusion reflecting on the experiment.
+
+        Returns:
+            The finished Experiment instance.
+
+        Raises:
+            RuntimeError: If the experiment has no manager reference.
+        """
+        exman = self._exman()
+        if exman is None:
+            raise RuntimeError(
+                "Experiment has no manager reference. "
+                "Use ExMan.finish() directly."
+            )
+        return exman.finish(self.metadata.exp_id, notes=notes, summary=summary)
+
+    def abort(self, notes: str = "") -> "Experiment":
+        """Abort this experiment.
+
+        Delegates to ``ExMan.abort()``.
+
+        Args:
+            notes: Optional post-mortem notes.
+
+        Returns:
+            The aborted Experiment instance.
+
+        Raises:
+            RuntimeError: If the experiment has no manager reference.
+        """
+        exman = self._exman()
+        if exman is None:
+            raise RuntimeError(
+                "Experiment has no manager reference. "
+                "Use ExMan.abort() directly."
+            )
+        return exman.abort(self.metadata.exp_id, notes=notes)
