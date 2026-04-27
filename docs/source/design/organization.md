@@ -181,14 +181,15 @@ kai-exman init -d "baseline training" -t "v1,resnet" --group train
 - Validates group name via `validate_group()`.
 - Updates `index.json` with new group mapping.
 
-#### `run --group GROUP`
+#### `init --group GROUP`
 
 ```bash
-kai-exman run --group train -- python train.py
+kai-exman init -d "..." --group train
 ```
 
-- Initializes in the specified group.
-- If `--retry` or `--inherit` is also passed, see Section 3.2 (Resume Move).
+- Creates the experiment in `root/train/`, not `root/default/`.
+- Validates group name via `validate_group()`.
+- Updates `index.json` with new group mapping.
 
 #### `list --tree`
 
@@ -230,15 +231,16 @@ kai-exman move a1b2c3d4 --group eval
 - Updates `index.json`.
 - Validates that the target group exists or creates it if `--create-group` is passed.
 
-#### `suggest-groups`
+#### `group`
 
 ```bash
-kai-exman suggest-groups --threshold 0.6
+kai-exman group --threshold 0.6
 ```
 
 - Runs auto-clustering (Section 3.4) and prints suggested groupings.
 - `--threshold` controls the Jaccard similarity cutoff (default: 0.5).
 - Dry-run by default; use `--apply` to actually move experiments.
+- `group -l` lists all groups with experiment counts.
 
 ### 3.2 Edge Case: Resume with Different Group
 
@@ -257,7 +259,7 @@ Rationale: Case A is an identity-preserving operation. Moving the experiment wou
 
 | Command | Behavior |
 | --- | --- |
-| `show child` | Displays `Parent: parent_123` with a `(trashed)` indicator. No error. |
+| `status child` | Displays `Parent: parent_123` with a `(trashed)` indicator. No error. |
 | `list --tree` | Shows `child` under its group. The parent is omitted from the tree (it is in trash). |
 | `resume child` | Case A/B detection uses the child's recorded `git_hash`, not the parent's. The parent is not consulted for git state. Resumption proceeds normally. |
 
@@ -327,7 +329,7 @@ def weighted_jaccard(set_a: set[str], set_b: set[str], idf: dict[str, float]) ->
 
 Where `idf[k] = log(N / (1 + count(k)))`, N = total experiments.
 
-**Scope**: Auto-clustering is a **suggestion engine**, not an automatic reorganization tool. It only runs when explicitly invoked via `suggest-groups`.
+**Scope**: Auto-clustering is a **suggestion engine**, not an automatic reorganization tool. It only runs when explicitly invoked via `group`.
 
 ---
 
@@ -358,7 +360,7 @@ Result: `/.exman/train/20260427_a1b2c3d4_baseline/`
 #### Step 2: Run training (attempt 1)**
 
 ```bash
-kai-exman run --group train -- python train.py --epochs 100
+kai-exman run a1b2c3d4 -- python train.py --epochs 100
 ```
 
 Status: Attempt 1 running. Global status: `running`.
@@ -368,7 +370,7 @@ Status: Attempt 1 running. Global status: `running`.
 Git hash unchanged, workspace clean.
 
 ```bash
-kai-exman run --retry a1b2c3d4 -- python train.py --epochs 100
+kai-exman run a1b2c3d4 -- python train.py --epochs 100
 ```
 
 Result: Attempt 2 appended. Status reset to `running`. Env var `KAI_EXMAN_ATTEMPT_COUNT=2`.
@@ -376,18 +378,19 @@ Result: Attempt 2 appended. Status reset to `running`. Env var `KAI_EXMAN_ATTEMP
 #### Step 4: Finish training**
 
 ```bash
-kai-exman finish a1b2c3d4 --status success
+kai-exman finish a1b2c3d4 -s "Training complete."
 ```
 
-#### Step 5: Initialize evaluation (Case B resume)**
+#### Step 5: Initialize evaluation (inherit from finished parent)**
 
 Code changed (new eval script). Logic-Dirty.
 
 ```bash
-kai-exman run --inherit a1b2c3d4 --group eval -- python eval.py --model best.pt
+kai-exman init -d "Evaluate baseline" --inherit a1b2c3d4 --group eval
+kai-exman run b2c3d4e5 -- python eval.py --model best.pt
 ```
 
-Result: New experiment `b2c3d4e5` in `/.exman/eval/`. `parent_id = a1b2c3d4`. Checkpoints symlinked.
+Result: New experiment `b2c3d4e5` in `/.exman/eval/`. `parent_ids = [a1b2c3d4]`. Checkpoints symlinked.
 
 Tags inherited: `Candidate, baseline, resnet50`.
 
@@ -532,13 +535,13 @@ ablation      2  ablation:2
 lr-sweep      2  ablation:2
 ```
 
-### 5.4 `show` Command (Updated)
+### 5.4 `status` Command (Updated)
 
 ```bash
-kai-exman show b2c3d4e5
+kai-exman status b2c3d4e5
 ```
 
-#### TTY Mode (show)
+#### TTY Mode (status)
 
 ```text
 [───────────────────────────────────────────────────────────────[│
@@ -573,7 +576,7 @@ New row added: **Group**.
 - `group` field in `Metadata` model with validation.
 - Hierarchical directory layout: `root/group/date_id_desc/`.
 - `index.json` cache with lazy updates and atomic writes.
-- CLI additions: `--group`, `--tree`, `tags`, `move`, `suggest-groups`.
+- CLI additions: `--group`, `--tree`, `tag -l`, `move`, `group`.
 - TTY and pipe-mode renderers for all new commands.
 - Edge case handling for resume-with-group and deleted-parent lineage.
 - Auto-clustering suggestion engine (config-key Jaccard similarity).
@@ -615,7 +618,7 @@ Before implementation begins, verify that the design satisfies these invariants:
 | 7 | A deleted parent does not orphan its children functionally. | Children use their own `git_hash` for resumption. |
 | 8 | Trash is global, not per-group. | Single `.trash/` at root. |
 | 9 | Tag filtering works across groups. | `tag_index` in `index.json` maps tag -> global IDs. |
-| 10 | Auto-clustering never moves experiments without explicit user approval. | `suggest-groups` is dry-run by default. |
+| 10 | Auto-clustering never moves experiments without explicit user approval. | `group` is dry-run by default. |
 
 ---
 
@@ -665,7 +668,7 @@ This section audits the current v0.1.0 implementation and identifies the specifi
 
 ### 8.4 CLI Surface (`cli.py`)
 
-**Current State**: Commands `init`, `run`, `list`, `show`, `finish`, `tag`, `rm` have no group awareness.
+**Current State**: Commands `init`, `run`, `list`, `status`, `finish`, `tag`, `rm` have no group awareness.
 
 **Required Changes**:
 
@@ -674,8 +677,8 @@ This section audits the current v0.1.0 implementation and identifies the specifi
 - Add `--group` filter to `list`.
 - Add new command: `tags [--group]`.
 - Add new command: `move EXP_ID --group NEW_GROUP [--create-group]`.
-- Add new command: `suggest-groups [--threshold] [--apply]`.
-- Update `show` to render the `Group` row in metadata panels.
+- Add new command: `group [--threshold] [--apply]`.
+- Update `status` to render the `Group` row in metadata panels.
 - Update `list` renderer to support tree indentation and the `->` lineage prefix.
 
 **Files**: `src/kaiexman/cli.py`

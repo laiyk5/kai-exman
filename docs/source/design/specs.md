@@ -82,11 +82,11 @@ class Metadata(BaseModel):
     data_version: str = ""               # Manual data version string (legacy)
     data_hash: str = ""                  # BLAKE2b hash of --data-path (auto-computed)
     description: str = ""                # Human-readable description
-    status: str = "running"              # Current status: draft, running, finished, aborted
+    status: str = "draft"                # Current status: draft, running, finished, aborted
     finished_at: str = ""               # ISO timestamp when the lab record was sealed
     locked: bool = False                 # True once finish() or abort() seals the record
     summary: str = ""                    # Conclusion written by finish()
-    parent_id: str = ""                  # Set for inherited experiments (Case B)
+    parent_ids: list[str] = []           # Set for inherited experiments (multi-parent support)
     attempts: list[Attempt] = []         # Execution attempts for resumption tracking
     group: str = "default"               # Physical group name (filesystem subdirectory)
     deletable: bool = False              # Marked for cascade removal when childless
@@ -98,10 +98,11 @@ Experiments transition through the following statuses:
 
 | Status | Meaning | How Set |
 | --- | --- | --- |
-| `running` | Experiment is active. | Default at initialization. |
+| `draft` | Experiment created but not yet executed. | `init()` creates experiments as drafts. |
+| `running` | Experiment is active (has at least one attempt). | After the first `run()` creates attempt 1. |
 | `success` | Experiment completed successfully (exit code 0). | `finish()` when last attempt has `exit_code == 0`. |
 | `failed` | Experiment terminated with errors (non-zero exit). | `finish()` when last attempt has non-zero `exit_code`. |
-| `aborted` | Experiment was stopped or did not complete (no exit code). | `finish()` when last attempt has `exit_code is None`. |
+| `aborted` | Experiment was stopped or did not complete (no exit code). | `abort()` or `finish()` when last attempt has `exit_code is None`. |
 
 `finish()` **auto-determines** status from the last attempt's `exit_code`. It does **not** accept an arbitrary status string. The state machine is enforced:
 
@@ -138,18 +139,26 @@ reproducibility warnings while preserving strictness for code changes.
 
 ```
 outputs/
-└── YYYYMMDD_<exp_id>_<safe_description>/
-    ├── metadata.json
-    ├── config.yaml          # Optional experiment configuration
-    ├── env.txt              # pip freeze snapshot
-    ├── code.patch           # Present if git_dirty at init time
-    ├── metrics.jsonl        # Append-only metrics log
-    ├── summary.md           # Generated on finish / abort
-    ├── logs/
-    └── artifacts/
-        ├── checkpoints/
-        ├── plots/
-        └── bad_cases.json   # Structured bad-case records
+├── index.json                 # Lookup cache
+├── .current                   # Default experiment ID
+├── .trash/                    # Deleted experiments
+├── default/
+│   └── YYYYMMDD_<exp_id>_<safe_description>/
+│       ├── metadata.json
+│       ├── config.yaml        # Optional experiment configuration
+│       ├── env.txt            # pip freeze snapshot
+│       ├── code.patch         # Present if git_dirty at init time
+│       ├── metrics.jsonl      # Append-only metrics log
+│       ├── summary.md         # Generated on finish / abort
+│       ├── logs/
+│       └── artifacts/
+│           ├── checkpoints/
+│           ├── plots/
+│           └── bad_cases.json # Structured bad-case records
+├── train/
+│   └── ...
+└── eval/
+    └── ...
 ```
 
 ---
@@ -288,10 +297,10 @@ All commands accept:
 
 #### `init`
 
-Initialize a new experiment.
+Create a draft experiment. This is the only command that creates experiments.
 
 ```bash
-kai-exman init [--description TEXT] [--tags TAGS] [--config PATH] [--data-path PATH]
+kai-exman init -d "..." [-t TAGS] [-c CONFIG] [--data-path PATH] [-g GROUP] [--inherit PID ...]
 ```
 
 | Option | Description |
@@ -300,13 +309,36 @@ kai-exman init [--description TEXT] [--tags TAGS] [--config PATH] [--data-path P
 | `-t, --tags` | Comma-separated tags. Empty entries are rejected. |
 | `-c, --config` | Path to a YAML configuration file to copy into the experiment. |
 | `--data-path` | Path to a dataset file or directory. A BLAKE2b hash is computed automatically and stored in `data_hash`. |
+| `-g, --group` | Target group (default: `default`). |
+| `--inherit` | Parent experiment ID to inherit from. Can be repeated for multi-parent. |
+
+#### `run`
+
+Execute a command on an existing experiment. Never creates a new experiment.
+
+```bash
+kai-exman run [EXP_ID] [--data-path PATH] [--reason TEXT] -- COMMAND
+```
+
+| Option | Description |
+| --- | --- |
+| `EXP_ID` | Optional experiment ID. Uses default experiment if omitted. |
+| `--data-path` | Dataset path for automatic BLAKE2b hash. |
+| `--reason` | Reason for this attempt (e.g. `retry after OOM`). Defaults to `run_N`. |
+| `COMMAND` | Command and arguments to execute, after `--`. |
+
+- On a **draft** experiment → creates attempt 1 and executes.
+- On a **running** experiment → appends attempt N (requires clean git state).
+- On a **finished** or **aborted** experiment → raises an error.
+
+The command is recorded in the attempt's `command` field for full reproducibility.
 
 #### `list` (alias: `log`)
 
 List experiments in git-log-style format.
 
 ```bash
-kai-exman list [--sort-by METRIC] [--order {asc,desc}] [--top N] [--oneline] [--tag TAG] [--full-id]
+kai-exman list [--sort-by METRIC] [--order {asc,desc}] [--top N] [--oneline] [--tree] [--tag TAG] [--group GROUP] [--full-id]
 ```
 
 | Option | Description |
@@ -315,35 +347,37 @@ kai-exman list [--sort-by METRIC] [--order {asc,desc}] [--top N] [--oneline] [--
 | `--order` | `asc` (min first) or `desc` (max first, default). |
 | `--top` | Show only the top N experiments. |
 | `--oneline` | Use compact one-line format per experiment. |
+| `--tree` | Display experiments in lineage tree view. |
 | `--tag` | Filter experiments by tag name (substring match). |
+| `--group` | Filter experiments by group name. |
 | `--full-id` | Display full 16-character experiment IDs. |
 
-#### `show`
+#### `status` (alias: `show`)
 
 Display a detailed summary of a specific experiment.
 
 ```bash
-kai-exman show [--full-id] EXP_ID
+kai-exman status [EXP_ID] [--full-id]
 ```
 
 | Option | Description |
 | --- | --- |
 | `--full-id` | Display the full 16-character experiment ID in the metadata panel. |
-| `EXP_ID` | Full ID or unambiguous prefix of the experiment to show. |
+| `EXP_ID` | Full ID or unambiguous prefix. Uses default experiment if omitted. |
 
 #### `finish`
 
 Close an experiment and generate `summary.md`.
 
 ```bash
-kai-exman finish [--summary TEXT] [--notes NOTES] EXP_ID
+kai-exman finish [EXP_ID] -s "..." [-n NOTES]
 ```
 
 | Option | Description |
 | --- | --- |
 | `-s, --summary` | **Mandatory** conclusion reflecting on the experiment. |
 | `-n, --notes` | Optional post-mortem notes included in the summary. |
-| `EXP_ID` | Full ID or unambiguous prefix of the experiment to finish. |
+| `EXP_ID` | Full ID or unambiguous prefix. Uses default experiment if omitted. |
 
 Status is auto-determined from the last attempt's `exit_code`: `0` → `success`, non-zero → `failed`, `None` → `aborted`. Raises an error if the experiment has no attempts or if already sealed.
 
@@ -352,50 +386,80 @@ Status is auto-determined from the last attempt's `exit_code`: `0` → `success`
 Permanently seal an experiment as having no value. No summary is required.
 
 ```bash
-kai-exman abort [--notes NOTES] EXP_ID
+kai-exman abort [EXP_ID] [-n NOTES]
 ```
 
 | Option | Description |
 | --- | --- |
 | `-n, --notes` | Optional notes for the generated `summary.md`. |
-| `EXP_ID` | Full ID or unambiguous prefix of the experiment to abort. |
+| `EXP_ID` | Full ID or unambiguous prefix. Uses default experiment if omitted. |
 
-The act of aborting is the complete statement. The summary is set to `"Aborted by user."` automatically. Aborted experiments cannot be resumed or inherited from.
-
-#### `run`
-
-Execute a command within an experiment context.
-
-```bash
-kai-exman run [--description TEXT] [--tags TAGS] [--config PATH] [--data-path PATH] [--retry ID] [--inherit PID] [--group GROUP] -- COMMAND
-```
-
-| Option | Description |
-| --- | --- |
-| `-d, --description` | **Required** for fresh runs and Case B inheritance. |
-| `-t, --tags` | Comma-separated tags. |
-| `-c, --config` | Path to a YAML configuration file. |
-| `--data-path` | Dataset path for automatic BLAKE2b hash. |
-| `--retry` | Experiment ID to retry (Case A). Parent must be `running`. |
-| `--inherit` | Experiment ID to inherit from (Case B). Parent must be `finished`. |
-| `-g, --group` | Target group (ignored for Case A retry). |
-| `COMMAND` | Command and arguments to execute, after `--`. |
-
-The command is recorded in the attempt's `command` field for full reproducibility.
+The act of aborting is the complete statement. The summary is set to `"Aborted by user."` automatically. Aborted experiments cannot be inherited from.
 
 #### `tag`
 
 Add or remove a tag on an experiment.
 
 ```bash
-kai-exman tag [--delete] EXP_ID TAG_NAME
+kai-exman tag [EXP_ID] TAG_NAME [--delete]
 ```
 
 | Option | Description |
 | --- | --- |
 | `-d, --delete` | Remove the tag instead of adding it. |
-| `EXP_ID` | Full ID or unambiguous prefix of the experiment. |
+| `-l, --list` | List all tags across experiments. |
+| `EXP_ID` | Full ID or unambiguous prefix. Uses default experiment if omitted. |
 | `TAG_NAME` | Tag to add or remove. Must pass `validate_tag()`. |
+
+#### `group` (alias: `suggest-groups`)
+
+Suggest group assignments or list all groups.
+
+```bash
+kai-exman group [-l] [--threshold FLOAT] [--apply]
+```
+
+| Option | Description |
+| --- | --- |
+| `-l, --list` | List all existing groups with experiment counts. |
+| `--threshold` | Jaccard similarity threshold for suggestions (default: from config). |
+| `--apply` | Apply suggested group moves (interactive TTY only). |
+
+#### `move`
+
+Move an experiment to another group.
+
+```bash
+kai-exman move [EXP_ID] -g GROUP
+```
+
+| Option | Description |
+| --- | --- |
+| `-g, --group` | **Required.** Target group name. |
+| `EXP_ID` | Full ID or unambiguous prefix. Uses default experiment if omitted. |
+
+#### `use`
+
+Set the default experiment for the current root.
+
+```bash
+kai-exman use EXP_ID
+```
+
+#### `rm`
+
+Move an experiment to trash, or purge trash entirely.
+
+```bash
+kai-exman rm [EXP_ID] [--yes] [--dry-run] [--mark-deletable] [--clear-trash]
+```
+
+| Option | Description |
+| --- | --- |
+| `-y, --yes` | Skip confirmation prompt. Required for non-TTY use. |
+| `--dry-run` | Preview what would be moved or purged without acting. |
+| `--mark-deletable` | Schedule for cascade removal when childless. |
+| `--clear-trash` | Permanently delete all items in trash (`EXP_ID` not required). |
 
 ---
 
@@ -449,6 +513,29 @@ exp.snapshot_env()
 ```
 
 Runs `pip list --format=freeze` and writes the output to `env.txt`. If pip is unavailable, writes a placeholder comment.
+
+### Lifecycle Convenience Methods
+
+When an experiment is created through `ExMan`, it stores a weak back-reference to its manager. This enables lifecycle convenience methods without passing IDs:
+
+```python
+exp = exman.init(description="Baseline training", tags=["v1"])
+
+# Execute on this experiment
+exp.run(["python", "train.py", "--epochs", "10"])
+
+# Retry with a reason
+exp.run(["python", "train.py"], reason="retry after OOM")
+
+# Finish
+exp.finish(summary="Converged to 92%.")
+```
+
+| Method | Delegates To | Raises |
+| --- | --- | --- |
+| `exp.run(command, data_path="", reason="")` | `ExMan.run()` | `RuntimeError` if no manager reference. |
+| `exp.finish(notes="", summary="")` | `ExMan.finish()` | `RuntimeError` if no manager reference. |
+| `exp.abort(notes="")` | `ExMan.abort()` | `RuntimeError` if no manager reference. |
 
 ---
 

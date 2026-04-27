@@ -8,19 +8,20 @@ The design follows a single principle:
 
 .. epigraph::
 
-   **"If no run, no experiment."**
+   **"Explicit creation, explicit execution."**
 
-Every experiment record is created by executing a command.
-There is no standalone "create empty experiment" step.
+Experiments are created via ``init`` as drafts with empty attempts.
+Execution is separate: ``run`` only operates on existing experiments.
+This gives the user explicit control over creation vs. execution.
 
 
 Core Concepts
 -------------
 
-Scripts-Centric Design
-^^^^^^^^^^^^^^^^^^^^^^
+Explicit Creation / Execution Separation
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-All experiment operations are variations of **running a command**:
+All experiment operations are divided into two orthogonal phases:
 
 .. list-table::
    :header-rows: 1
@@ -29,27 +30,22 @@ All experiment operations are variations of **running a command**:
    * - Command Form
      - Semantics
      - Creates Experiment?
-   * - ``run -d "..." -- cmd``
-     - Fresh run: create a new experiment, execute the command.
-     - Yes (new)
-   * - ``run --retry <id> -- cmd``
-     - Retry (Case A): append attempt to a running experiment.
+   * - ``init -d "..."``
+     - Create a draft experiment with empty attempts.
+     - **Yes** (new root)
+   * - ``init -d "..." --inherit <pid>``
+     - Create a draft child from finished parent(s).
+     - **Yes** (child)
+   * - ``run <id> -- cmd``
+     - Execute on an existing experiment.
      - No
-   * - ``run --inherit <pid> -- cmd``
-     - Inherit (Case B): create child from a finished parent.
-     - Yes (child)
-   * - ``retry <id> -- cmd``
-     - Standalone retry (Case A only). Append attempt to running experiment.
-     - No (same exp)
+   * - ``finish [<id>] -s "..."``
+     - Seal the experiment with a conclusion.
+     - No
+   * - ``abort [<id>]``
+     - Give up on the experiment. No summary needed.
+     - No
 
-There is no ``init`` command. A "draft" experiment is simply one that
-has been created by ``run`` but whose command exited before creating
-any meaningful artifacts. If you want to set up an experiment without
-running anything meaningful, run a no-op command:
-
-.. code-block:: bash
-
-   kai-exman run -d "Setup baseline config" -- true
 
 Experiment vs. Attempt States
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -64,19 +60,19 @@ Experiment and attempt have **independent** state machines.
 
 - ``draft``
   The experiment directory exists but no attempt has been executed yet.
-  Only possible immediately after a no-op ``run``.
+  Created by ``init``.
 
 - ``running``
   At least one attempt exists. The experiment is **unlocked** and can
-  receive additional attempts via ``run --retry``.
+  receive additional attempts via ``run``.
 
 - ``finished``
   The user called ``finish``, submitted a summary, and the experiment
-  is **locked**. It can serve as a parent for ``run --inherit``.
+  is **locked**. It can serve as a parent for ``init --inherit``.
 
 - ``aborted``
   The user called ``abort``. The experiment is **locked** and has
-  **no value**. It cannot be retried or inherited from.
+  **no value**. It cannot be inherited from.
 
 **Attempt states** (execution outcome):
 
@@ -103,6 +99,7 @@ Experiment and attempt have **independent** state machines.
 A ``success`` attempt does **not** make the experiment ``finished``.
 Only the explicit ``finish`` command can do that.
 
+
 Retry vs. Inherit
 ^^^^^^^^^^^^^^^^^
 
@@ -117,15 +114,16 @@ Retry vs. Inherit
      - Append a new attempt to the *same* experiment.
      - Experiment is ``running``, workspace is **clean**.
    * - **Inherit**
-     - Create a *new* experiment from a finished parent's artifacts.
-     - Parent is ``finished`` (locked).
+     - Create a *new* experiment from finished parent(s).
+     - Parent(s) are ``finished`` (locked).
 
 Key constraints:
 
-- An **aborted** experiment can never be resumed or inherited from.
+- An **aborted** experiment can never be inherited from.
 - A **running** experiment with a **diverged** workspace cannot be
   retried. The user must ``finish`` or ``abort`` it first, then
-  ``run --inherit`` from the finished record.
+  ``init --inherit`` from the finished record.
+- Inheritance supports **multiple parents** via repeated ``--inherit`` flags.
 
 
 State Transition Diagram
@@ -137,8 +135,8 @@ Experiment State Machine
 .. code-block:: text
 
                     +-------------------------+
-                    | run -d "..." -- true    |
-                    | (no-op, creates draft)  |
+                    | init -d "..."           |
+                    | (creates draft)         |
                     +------------+------------+
                                  |
                                  v
@@ -156,19 +154,19 @@ Experiment State Machine
                |
     +----------+----------+
     |                     |
-    | run --retry <id>    | finish -s "..."
-    | (clean git)         |
+    | run -- python train.py   (git clean)
+    | (append attempt)    | finish -s "..."
     v                     v
   +---------+       +----------+
   | running |       | finished |
   |(new att)|       | (locked) |
   +----+----+       +----+-----+
        |                 |
-       |                 | run --inherit <pid>
+       |                 | init --inherit <pid> -d "..."
        |                 v
        |            +---------+
-       |            |  child  |
-       |            | (draft) |
+       |            |  draft  |
+       |            |(child)  |
        |            +----+----+
        |                 |
        |                 | run -- python train.py
@@ -201,6 +199,7 @@ Legend
 - Solid arrows — Valid transitions
 - Dashed arrows (conceptual) — Blocked paths that raise errors
 
+
 Attempt Status Within a Running Experiment
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -222,19 +221,23 @@ Attempt Status Within a Running Experiment
 CLI Command Interaction Diagram
 -------------------------------
 
-Complete Workflow (Scripts-Centric)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Complete Workflow
+^^^^^^^^^^^^^^^^^
 
 .. code-block:: text
 
    User                    CLI                  ExMan               Filesystem
     |                       |                     |                     |
-    |-- run -d "..." --...->|                     |                     |
+    |-- init -d "..." ----->|                     |                     |
     |                       |-- init() --------->|                     |
     |                       |                     |-- mkdir, snapshot ->|
     |                       |                     |<-- exp --------------|
     |                       |<-- exp_id ---------|                     |
     |                       |                     |                     |
+    |-- run <id> --... ---->|                     |                     |
+    |                       |-- run() ---------->|                     |
+    |                       |                     |-- append attempt -->|
+    |                       |                     |<-- exp --------------|
     |                       |-- subprocess ----->|                     |
     |                       |   (KAI_EXMAN_*)   |                     |
     |                       |        |            |                     |
@@ -256,54 +259,39 @@ Complete Workflow (Scripts-Centric)
     |                       |                     |-- lock, summary.md->|
     |                       |<-- done ------------|                     |
     |                       |                     |                     |
-    |-- run --retry <id> -->|                     |                     |
-    |   -- python train.py  |                     |                     |
-    |                       |-- resume(Case A) -->|                     |
-    |                       |                     |-- append attempt -->|
-    |                       |<-- exp ------------|                     |
-    |                       |-- subprocess ----->|                     |
-    |                       |        |            |                     |
-    |                       |        v            |                     |
-    |                       |     +--+-----+      |                     |
-    |                       |     |   OS   |      |                     |
-    |                       |     +--------+      |                     |
-    |                       |        |            |                     |
-    |                       |<-- exit_code -------|                     |
-    |                       |                     |                     |
-    |-- run --inherit <pid>|                     |                     |
-    |   -d "..." -- python  |                     |                     |
-    |                       |-- resume(Case B) -->|                     |
+    |-- init --inherit <pid>|                     |                     |
+    |   -d "..."            |                     |                     |
+    |                       |-- init(parent_ids)->|                     |
     |                       |                     |-- init(child) ----->|
     |                       |                     |-- copy ckpts ------>|
     |                       |                     |<-- child exp -------|
     |                       |<-- child_id --------|                     |
+    |                       |                     |                     |
+    |-- run <child_id> ---->|                     |                     |
+    |   -- python train.py  |                     |                     |
+    |                       |-- run() ---------->|                     |
     |                       |-- subprocess ----->|                     |
     |                       |        |            |                     |
     |                       |        v            |                     |
     |                       |     +--+-----+      |                     |
-    |                       |     |   OS   |      |                     |
-    |                       |     +--------+      |                     |
+
 
 Error Paths (Blocked Transitions)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. code-block:: text
 
-   User: run --retry <aborted_id> -- python train.py
-   CLI ──► resume() ──► ✗ ValueError:
-         "Aborted experiments cannot be resumed."
+   User: run <finished_id> -- python train.py
+   CLI ──► run() ──► ✗ ValueError:
+         "Experiment is finished. Use `init --inherit <id>` to create a child."
 
-   User: run --inherit <running_id> -- python train.py
-   CLI ──► resume() ──► ✗ ValueError:
-         "Experiment is still running. Use `run --retry` to append an attempt."
+   User: run <aborted_id> -- python train.py
+   CLI ──► run() ──► ✗ ValueError:
+         "Aborted experiments cannot be run."
 
-   User: retry <aborted_id> -- python train.py
-   CLI ──► resume() ──► ✗ ValueError:
-         "Aborted experiments cannot be inherited."
-
-   User: retry <aborted_id> -- python train.py
-   CLI ──► resume() ──► ✗ ValueError:
-         "Aborted experiments cannot be inherited."
+   User: init --inherit <running_id> -d "..."
+   CLI ──► init() ──► ✗ ValueError:
+         "Experiment is still running. Finish or abort it first."
 
    User: rm <parent_id>
    CLI ──► remove() ──► ✗ ValueError:
@@ -323,18 +311,18 @@ Lifecycle Commands
    * - Command
      - Purpose
      - Constraints
-   * - ``run -d "..." [--data-path PATH] -- cmd``
-     - Fresh run: create a new experiment and execute the command.
-     - ``description`` is **required**. ``--data-path`` is optional.
-   * - ``run --retry <id> [--data-path PATH] -- cmd``
-     - Retry (Case A): append attempt to a running experiment.
-     - Exp must be ``running``, git **clean**.
-   * - ``run --inherit <pid> -d "..." [--data-path PATH] -- cmd``
-     - Inherit (Case B): create child from a finished parent.
-     - ``description`` is **required**.
-   * - ``retry <id> [--data-path PATH] -- cmd``
-     - Standalone retry (Case A only). Append attempt to a running experiment.
-     - Exp must be ``running``, git **clean**.
+   * - ``init -d "..." [--data-path PATH]``
+     - Create a draft experiment.
+     - ``description`` is **required** in non-TTY mode.
+   * - ``init -d "..." --inherit <pid>``
+     - Create a draft child from finished parent(s).
+     - Parent must be ``finished``. Can repeat ``--inherit`` for multi-parent.
+   * - ``run [<id>] -- cmd``
+     - Execute on an existing experiment.
+     - Draft → attempt 1. Running → append attempt (git clean).
+   * - ``run [<id>] --reason "..." -- cmd``
+     - Execute with an explicit attempt reason.
+     - Optional. Defaults to ``run_N``.
    * - ``finish [<id>] -s "..."``
      - Seal the experiment with a conclusion.
      - ``summary`` is **required**, at least one attempt.
@@ -355,16 +343,19 @@ Management Commands
    * - ``list`` / ``list --tree``
      - List experiments.
      - Shows intent / conclusion per mode.
-   * - ``show <id>``
-     - Display full details.
+   * - ``status [<id>]``
+     - Display full details (alias: ``show``).
      - —
-   * - ``tag <id> <tag>``
+   * - ``tag [<id>] <tag>``
      - Add/remove tags.
-     - —
-   * - ``move <id> -g <group>``
+     - ``tag -l`` lists all tags.
+   * - ``group``
+     - Suggest group assignments.
+     - ``group -l`` lists all groups.
+   * - ``move [<id>] -g <group>``
      - Move to another group.
      - —
-   * - ``rm <id>``
+   * - ``rm [<id>]``
      - Move to trash.
      - Rejected if experiment has children.
    * - ``rm --clear-trash``
@@ -383,12 +374,12 @@ Metadata
    class Metadata:
        exp_id: str              # 16-char hex
        group: str
-       description: str         # intent (required at run / run --inherit)
+       description: str         # intent (required at init)
        summary: str | None      # conclusion (required at finish)
        tags: list[str]
        status: str              # "draft" | "running" | "finished" | "aborted"
        locked: bool             # True for finished / aborted
-       parent_id: str | None    # set only by run --inherit
+       parent_ids: list[str]    # set by init --inherit
        git_hash: str | None
        git_dirty: bool
        data_version: str
@@ -409,21 +400,20 @@ Attempt
        start_time: str
        end_time: str | None
        exit_code: int | None
-       reason: str              # e.g. "run_1", "retry_after_oom"
+       reason: str              # e.g. "run_1", "retry after OOM"
        command: list[str]        # argv recorded at attempt start
 
 
 Rule Summary
 ------------
 
-Run (Fresh) Rules
-^^^^^^^^^^^^^^^^^
+Run Rules
+^^^^^^^^^
 
-- Always creates a **new** experiment.
-- ``description`` is **required**.
-- ``tags``, ``config``, ``group`` are optional.
-- After the subprocess exits, the experiment status remains ``running``
-  (not ``success`` or ``failed``). Only the *attempt* records the outcome.
+- Operates on an **existing** experiment. Never creates a new one.
+- On a **draft** → creates attempt 1 and executes.
+- On a **running** experiment → appends attempt N (git clean required).
+- On a **finished** or **aborted** experiment → raises.
 
 Retry Rules
 ^^^^^^^^^^^
@@ -440,7 +430,7 @@ Retry Rules
      - Append new attempt to same experiment
    * - ❌
      - Exp is ``finished`` (locked)
-     - Cannot retry; use ``run --inherit`` to create a child.
+     - Cannot retry; use ``init --inherit`` to create a child.
    * - ❌
      - Exp is ``aborted`` (locked)
      - Permanently prohibited
@@ -460,7 +450,7 @@ Inherit Rules
      - Outcome
    * - ✅
      - Parent is ``finished``
-     - Create child experiment, copy checkpoints
+     - Create child experiment, copy checkpoints from all parents
    * - ❌
      - Parent is ``aborted``
      - No value; permanently prohibited
@@ -490,7 +480,7 @@ Abort Rules
 - **No summary required.** The act of aborting is the statement.
 - ``locked`` is set to ``True``.
 - ``status`` becomes ``aborted``.
-- A minimal ``summary.md`` may be generated with a default note
+- A minimal ``summary.md`` is generated with a default note
   (e.g. "Aborted by user.").
 - **No future operations allowed** on this experiment.
 
@@ -542,39 +532,33 @@ Trash auto-purges oldest items when capacity limits are exceeded.
 Design Decisions
 ----------------
 
-D1: Scripts-Centric Design ("If No Run, No Experiment")
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+D1: Explicit Creation / Execution Separation
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-**Decision:** There is no standalone ``init`` command. Every experiment
-is created by executing a command.
-
-**Rationale:**
-An experiment without execution has no observable outcome.
-If a user wants to "prepare" an experiment without running real work,
-they run a no-op command:
-
-.. code-block:: bash
-
-   kai-exman run -d "Setup baseline" -- true
-
-This keeps the CLI surface minimal and enforces the principle that
-experiments are defined by what they *do*, not just what they *intend*.
-
-D2: Unified ``run`` Command
-^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-**Decision:** ``run`` has three mutually exclusive modes:
-
-1. **Default** (no flags) — create a new experiment.
-2. ``--retry <id>`` — explicit Case A (retry).
-3. ``--inherit <pid>`` — explicit Case B (inherit).
-
-A standalone ``retry`` command is retained for explicit Case A retries.
+**Decision:** ``init`` is the only command that creates experiments.
+``run`` is execution-only and never creates.
 
 **Rationale:**
-Retry, inherit, and fresh run are all fundamentally "execute a command
-in an experiment context." Unifying them under ``run`` makes the CLI
-more discoverable and reduces the number of top-level commands.
+Creation and execution are conceptually different acts. The user should
+declare intent before running. A draft experiment can exist without
+execution — it represents a planned experiment with configuration,
+tags, and inheritance set up in advance.
+
+This replaces the old "scripts-centric" model where ``run`` silently
+created experiments, making it impossible to set up an experiment
+without also executing a command.
+
+D2: Unified ``run`` Command (Execution-Only)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+**Decision:** ``run`` only executes on existing experiments. It handles
+both drafts (first attempt) and running experiments (append attempt).
+No ``--retry`` or ``--inherit`` flags.
+
+**Rationale:**
+Since ``init`` handles creation, ``run`` only needs to execute. A single
+execution command is simpler than three variants. The user provides the
+experiment ID (or uses the default), and ``run`` does the right thing.
 
 D3: Experiment vs. Attempt States Are Independent
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -609,11 +593,11 @@ itself is the complete statement.
 D5: Retry Supports Optional ``--reason``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-**Decision:** ``retry`` accepts an optional ``--reason`` flag.
+**Decision:** ``run`` accepts an optional ``--reason`` flag.
 
 .. code-block:: bash
 
-   kai-exman retry <id> --reason "retry after OOM" -- python train.py
+   kai-exman run <id> --reason "retry after OOM" -- python train.py
 
 If omitted, ``Attempt.reason`` defaults to ``"run_N"``.
 
@@ -626,7 +610,7 @@ every trivial retry.
 D6: Inherit Requires Description
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-**Decision:** ``run --inherit`` (Case B) always requires a
+**Decision:** ``init --inherit`` always requires a
 ``description`` for the child experiment.
 
 **Rationale:**

@@ -2,7 +2,7 @@
 
 ## 1. Problem: Single Parent is Too Restrictive
 
-The current `Metadata.parent_id: str | None` assumes an experiment inherits from at most one ancestor. In practice, a new experiment often combines artifacts or insights from **multiple** prior experiments:
+The old `Metadata.parent_id: str | None` assumed an experiment inherits from at most one ancestor. In practice, a new experiment often combines artifacts or insights from **multiple** prior experiments:
 
 - **Ensemble training**: inherits checkpoints from three independently trained models.
 - **Cross-group evaluation**: inherits a model from group `train` and a dataset config from group `data`.
@@ -12,7 +12,7 @@ A single `parent_id` cannot express these relationships.
 
 ## 2. Decision: `parent_ids` List
 
-Replace the scalar `parent_id` with a list `parent_ids`. Both the Python API and the CLI must support **multiple inheritance**.
+Replace the scalar `parent_id` with a list `parent_ids`. Both the Python API and the CLI support **multiple inheritance**.
 
 ### Metadata Schema Change
 
@@ -29,11 +29,11 @@ class Metadata:
 
 ### Index Cache
 
-`index.json` already stores `"parent_id"` per experiment. Migrate to `"parent_ids"` (list). On load, a scalar `"parent_id"` is transparently upgraded to a single-element list for backward compatibility.
+`index.json` stores `"parent_ids"` per experiment. On load, a scalar `"parent_id"` in existing `metadata.json` is transparently upgraded to a single-element list for backward compatibility.
 
 ## 3. Explicit Python API
 
-Today `ExMan.resume()` is overloaded: it auto-detects retry vs. inherit. This is convenient but violates the principle of explicit intent. We split it into three dedicated methods.
+Today `ExMan.resume()` is overloaded: it auto-detects retry vs. inherit. This is convenient but violates the principle of explicit intent. We split creation and execution into two dedicated methods.
 
 ### `ExMan.init()` — Create a Draft
 
@@ -54,54 +54,48 @@ def init(
 - **Behavior**: If `parent_ids` is provided, the new experiment is created and checkpoints/configs are merged from all parents.
 - **Constraint**: All parent experiments must be `finished`. Aborted or `running` parents raise `ValueError`.
 
-### `ExMan.retry()` — Explicit Retry (Case A)
+### `ExMan.run()` — Execute on Existing Experiment
+
+```python
+def run(
+    self,
+    exp_id: str,
+    command: list[str],
+    data_path: str = "",
+    reason: str = "",
+) -> tuple[Experiment, int]:
+```
+
+- **Semantics**: Execute a command on an existing experiment.
+- On a **draft** → creates attempt 1 and executes.
+- On a **running** experiment → appends a new attempt (git clean required).
+- On a **finished** or **aborted** experiment → raises `ValueError`.
+
+### `ExMan.retry()` — Backward-Compatible Wrapper
 
 ```python
 def retry(
     self,
     exp_id: str,
+    command: list[str],
     data_path: str = "",
+    reason: str = "",
 ) -> tuple[Experiment, int]:
 ```
 
 - **Semantics**: Append a new attempt to an existing **running** experiment.
-- **Validation**: Parent must be `running`, workspace must be clean.
-- **Returns**: `(experiment, attempt_number)`.
-
-### `ExMan.inherit()` — Explicit Inherit (Case B)
-
-```python
-def inherit(
-    self,
-    parent_ids: list[str],
-    description: str,
-    tags: list[str] | None = None,
-    config: dict | None = None,
-    data_version: str = "",
-    group: str = "default",
-    data_path: str = "",
-) -> Experiment:
-```
-
-- **Semantics**: Create a new experiment that inherits from one or more finished parents.
-- **Validation**:
-  - Every parent must exist.
-  - Every parent must be `finished` (not `running` or `aborted`).
-  - `description` is **required** (a child is a new exploration).
-- **Merging rules**:
-  - `tags`: union of all parent tags (deduplicated), overridable via `tags` parameter.
-  - `config`: deep-merge of all parent configs (last parent wins on key collision), overridable via `config` parameter.
-  - `checkpoints`: symlink/copy from **all** parents into `artifacts/checkpoints/`. Name collisions are resolved by prefixing with the parent's short ID: `{parent_short}_{original_name}`.
+- **Validation**: Raises if the experiment is not `running` or has no attempts.
+- **Note**: This is a thin wrapper around `run()`. New code should use `run()` directly.
 
 ### Deprecation of `ExMan.resume()`
 
-`resume()` is kept with `mode="auto"` for backward compatibility, but it is **deprecated** in docstrings. New code should use `init()`, `retry()`, or `inherit()` explicitly.
+`resume()` is kept with `mode="auto"` for backward compatibility, but it is **deprecated** in docstrings. New code should use `init()` + `run()` directly.
 
 ## 4. CLI Changes
 
 ### `init` Gains `--inherit`
 
-Since `init` already exists as a standalone command (creating a draft without running), it should support inheritance:
+Since `init` is the sole creation command, it supports inheritance:
 
 ```bash
 # Single inheritance
@@ -116,30 +110,26 @@ kai-exman init -d "Cross-group fusion" \
 
 `--inherit` is a **multi-value option** (Click `multiple=True`).
 
-### `run` Keeps `--inherit` (Single or Multiple)
+### `run` is Execution-Only
+
+`run` never creates a new experiment. It only executes on an existing one:
 
 ```bash
-# Single
-kai-exman run --inherit a1b2c3d4 -d "Tune LR" -- python train.py
+# Run on draft (creates attempt 1)
+kai-exman run a1b2c3d4 -- python train.py
 
-# Multiple
-kai-exman run --inherit a1b2c3d4 --inherit b2c3d4e5 -d "Ensemble" -- python train.py
+# Run on running experiment (appends attempt N)
+kai-exman run a1b2c3d4 -- python train.py
 ```
 
-### `retry` Remains Explicit
-
-```bash
-kai-exman retry a1b2c3d4 -- python train.py
-```
-
-`retry` does **not** support multiple experiments; it appends an attempt to exactly one running experiment.
+The `retry` CLI command has been removed; `run` handles both drafts and running experiments.
 
 ### Tree View (`list --tree`)
 
 With multiple parents, the lineage is a **DAG**, not a tree.
 
 - An experiment with multiple parents is rendered under **each** parent branch.
-- A `[*]` marker indicates multi-parent experiments.
+- A `[multi-parent]` marker is shown.
 
 Example:
 
@@ -205,10 +195,10 @@ Multi-parent experiments complicate cascade deletion:
 
 ## 8. Acceptance Criteria
 
-1. `ExMan.inherit(["a1b2c3d4", "b2c3d4e5"], description="...")` creates a child with both parents in `parent_ids`.
-2. `ExMan.retry("a1b2c3d4")` appends an attempt only if the experiment is `running`.
-3. `init --inherit a1b2c3d4 --inherit b2c3d4e5` creates a draft with two parents.
-4. `run --inherit a1b2c3d4 --inherit b2c3d4e5` creates a child and copies checkpoints from both.
+1. `ExMan.init(parent_ids=["a1b2c3d4", "b2c3d4e5"], description="...")` creates a child with both parents in `parent_ids`.
+2. `ExMan.run(exp_id, ["python", "train.py"])` on a draft creates attempt 1.
+3. `ExMan.run(exp_id, ["python", "train.py"])` on a running experiment appends attempt N.
+4. `init --inherit a1b2c3d4 --inherit b2c3d4e5` creates a draft with two parents.
 5. Checkpoint name collisions are resolved with `{parent_short}_` prefix.
 6. `list --tree` renders multi-parent experiments under each parent branch with a `[multi-parent]` indicator.
 7. Old `parent_id` fields in existing `metadata.json` are transparently upgraded to `parent_ids` on load.
