@@ -25,30 +25,31 @@ from kaiexman.manager import ExMan
 from kaiexman.models import LockedExperimentError, MissingSummaryError
 
 # Editor templates for the Mandatory Reflection policy.
+# Lines starting with # are stripped by _require_text.
 _INTENT_TEMPLATE = """\
-Hypothesis:
-
-Method:
-
-Expected outcome:
+# Hypothesis:
+#
+# Method:
+#
+# Expected outcome:
 """
 
 _FORK_TEMPLATE = """\
-What changed from the parent:
-
-Why this change matters:
-
-Expected impact:
+# What changed from the parent:
+#
+# Why this change matters:
+#
+# Expected impact:
 """
 
 _CONCLUSION_TEMPLATE = """\
-What worked:
-
-What did not work:
-
-Key metrics / observations:
-
-Next steps:
+# What worked:
+#
+# What did not work:
+#
+# Key metrics / observations:
+#
+# Next steps:
 """
 
 

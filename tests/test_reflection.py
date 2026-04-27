@@ -361,8 +361,8 @@ def test_require_text_prefills_template(monkeypatch):
     monkeypatch.setattr("click.edit", fake_edit)
 
     _require_text("", "prompt", "error", template=_CONCLUSION_TEMPLATE)
-    assert "What worked:" in captured["text"]
-    assert "Next steps:" in captured["text"]
+    assert "# What worked:" in captured["text"]
+    assert "# Next steps:" in captured["text"]
 
 
 def test_require_text_empty_after_comment_stripping_raises(monkeypatch):
