@@ -74,6 +74,7 @@ class ExMan:
         safe = "".join(
             c for c in safe if (c.isascii() and c.isalnum()) or c in "_-"
         ).rstrip("_")
+        safe = safe[:50]  # Avoid overly long paths
         return f"{date_str}_{exp_id}_{safe}" if safe else f"{date_str}_{exp_id}"
 
     # ------------------------------------------------------------------

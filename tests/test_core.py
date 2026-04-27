@@ -134,3 +134,14 @@ def test_list_and_get(tmp_exman_path):
 
     missing = exman.get("nonexistent")
     assert missing is None
+
+
+def test_init_truncates_long_description_in_folder_name(tmp_exman_path):
+    exman = ExMan(root=tmp_exman_path)
+    long_desc = "A" * 200
+    exp = exman.init(description=long_desc)
+    # The folder name should be truncated to avoid overly long paths
+    name_part = exp.root.name
+    desc_part = name_part.split("_")[-1]
+    assert len(desc_part) <= 50
+    assert desc_part == "A" * 50

@@ -390,6 +390,18 @@ def run(
     cfg_mgr: ConfigManager = ctx.obj["config"]
     exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
 
+    # Auto-detect resume: if the first positional arg unambiguously matches
+    # an existing experiment ID, treat it as --resume.
+    if not resume and command:
+        first = command[0]
+        experiments = exman.list()
+        matches = [
+            e for e in experiments if e.metadata.exp_id.startswith(first)
+        ]
+        if len(matches) == 1:
+            resume = matches[0].metadata.exp_id
+            command = command[1:]
+
     if resume:
         resolved_id = _resolve_exp_id(exman, resume)
         description = _require_text(
