@@ -131,6 +131,15 @@ Status is determined automatically from the last attempt's exit code:
 | Non-zero | `failed` |
 | `None` (stopped) | `aborted` |
 
+### Abort an experiment manually
+
+```bash
+kai-exman abort <exp_id> --notes "Stopped early due to NaN"
+```
+
+Use `abort` when an experiment was stopped manually or did not complete
+normally. It marks the last attempt as aborted and seals the record.
+
 ## Motivation
 
 Machine learning projects generate hundreds of experiments. Ad-hoc tracking

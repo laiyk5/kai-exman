@@ -516,3 +516,73 @@ def test_write_metadata_blocks_when_locked(tmp_exman_path):
     assert reloaded is not None
     with pytest.raises(LockedExperimentError, match="locked"):
         reloaded.add_tag("forbidden")
+
+
+def test_abort_command_sets_aborted_status(tmp_exman_path):
+    """Abort CLI command marks last attempt as aborted and seals record."""
+    from click.testing import CliRunner
+
+    from kaiexman.cli import cli
+
+    exman = ExMan(root=tmp_exman_path)
+    exp = exman.init(description="abort test")
+    from kaiexman.models import Attempt
+    exp.metadata.attempts.append(
+        Attempt(sequence=1, status="running")
+    )
+    exp.write_metadata()
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli, ["--path", tmp_exman_path, "abort", exp.metadata.exp_id]
+    )
+    assert result.exit_code == 0
+    assert "aborted" in result.output.lower()
+
+    reloaded = exman.get(exp.metadata.exp_id)
+    assert reloaded is not None
+    assert reloaded.metadata.status == "aborted"
+    assert reloaded.metadata.locked is True
+    assert reloaded.metadata.finished_at != ""
+    assert reloaded.metadata.attempts[-1].exit_code is None
+    assert reloaded.metadata.attempts[-1].status == "aborted"
+
+
+def test_abort_command_blocks_no_attempts(tmp_exman_path):
+    """Abort on experiment with no attempts should fail."""
+    from click.testing import CliRunner
+
+    from kaiexman.cli import cli
+
+    exman = ExMan(root=tmp_exman_path)
+    exp = exman.init(description="abort test")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli, ["--path", tmp_exman_path, "abort", exp.metadata.exp_id]
+    )
+    assert result.exit_code != 0
+    assert "no attempts" in result.output.lower()
+
+
+def test_abort_command_blocks_already_locked(tmp_exman_path):
+    """Abort on already-finished experiment should fail."""
+    from click.testing import CliRunner
+
+    from kaiexman.cli import cli
+
+    exman = ExMan(root=tmp_exman_path)
+    exp = exman.init(description="abort test")
+    from kaiexman.models import Attempt
+    exp.metadata.attempts.append(
+        Attempt(sequence=1, status="running", exit_code=0)
+    )
+    exp.write_metadata()
+    exman.finish(exp.metadata.exp_id)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli, ["--path", tmp_exman_path, "abort", exp.metadata.exp_id]
+    )
+    assert result.exit_code != 0
+    assert "sealed" in result.output.lower()

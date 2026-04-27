@@ -135,6 +135,13 @@ Status is auto-determined from the last attempt's exit code:
 - Non-zero -> ``failed``
 - ``None`` (stopped) -> ``aborted``
 
+Abort an experiment manually::
+
+    kai-exman abort <exp_id> --notes "Stopped early due to NaN"
+
+Use ``abort`` when an experiment was stopped manually or did not complete
+normally. It marks the last attempt as aborted and seals the record.
+
 Remove an experiment (moved to trash for safety)::
 
     kai-exman rm <exp_id>

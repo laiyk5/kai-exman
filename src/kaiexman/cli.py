@@ -884,6 +884,54 @@ def finish(ctx: click.Context, exp_id: str, notes: str) -> None:
 
 @cli.command()
 @click.argument("exp_id")
+@click.option("--notes", "-n", default="", help="Post-mortem notes")
+@click.pass_context
+def abort(ctx: click.Context, exp_id: str, notes: str) -> None:
+    """Abort an experiment and generate summary.md.
+
+    Marks the last attempt as aborted (no exit code) and seals the lab
+    record. Use this when an experiment was stopped manually or did not
+    complete normally.
+    """
+    cfg_mgr: ConfigManager = ctx.obj["config"]
+    exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
+    resolved_id = _resolve_exp_id(exman, exp_id)
+
+    exp = exman.get(resolved_id)
+    if exp is None:
+        raise click.ClickException(f"Experiment '{resolved_id}' not found")
+    if not exp.metadata.attempts:
+        raise click.ClickException(
+            f"Experiment '{resolved_id}' has no attempts. Cannot abort."
+        )
+    if exp.metadata.locked:
+        raise click.ClickException(
+            f"Experiment {resolved_id} is already sealed. "
+            "Use 'kai-exman run --resume <id>' to start a new record."
+        )
+
+    last = exp.metadata.attempts[-1]
+    last.exit_code = None
+    last.status = "aborted"
+    exp.write_metadata()
+
+    try:
+        finished = exman.finish(exp_id=resolved_id, notes=notes)
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc)) from exc
+    except LockedExperimentError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    short_len = cfg_mgr.get("short_id_length", 8)
+    short_id = finished.metadata.exp_id[:short_len]
+    _echo_lines(ctx, [
+        f"[bold dim]Experiment {short_id} aborted.[/bold dim]",
+        f"Summary written to: {finished.root / 'summary.md'}",
+    ])
+
+
+@cli.command()
+@click.argument("exp_id")
 @click.option(
     "--full-id",
     is_flag=True,
