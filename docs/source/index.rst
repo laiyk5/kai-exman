@@ -15,6 +15,7 @@ A lightweight, filesystem-first experiment management toolkit designed for repro
    :caption: Design Specifications:
 
    design/philosophy
+   design/principles
    design/specs
    design/organization
    design/lifecycle
