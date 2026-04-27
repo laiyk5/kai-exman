@@ -554,10 +554,10 @@ class ExMan:
             )
 
         # Case A: Logic-Clean Resume (Retry)
-        # Only possible if the parent actually has attempts to resume from.
+        # Includes draft experiments (no attempts yet) — starting the first
+        # attempt on an initialized-but-not-run experiment is natural.
         if (
-            parent_has_attempts
-            and current_hash
+            current_hash
             and current_hash == parent.metadata.git_hash
             and not current_dirty
         ):

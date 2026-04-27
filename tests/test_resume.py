@@ -11,8 +11,8 @@ from kaiexman import ExMan
 from kaiexman.cli import cli
 
 
-def test_resume_no_attempts_always_creates_new_id(tmp_exman_path, monkeypatch):
-    """Parent with no attempts → resume always creates a new ID (Case B)."""
+def test_resume_no_attempts_clean_creates_first_attempt(tmp_exman_path, monkeypatch):
+    """Draft experiment (no attempts) + clean workspace → first attempt (Case A)."""
     exman = ExMan(root=tmp_exman_path)
     parent = exman.init(description="parent")
     parent_hash = parent.metadata.git_hash
@@ -22,12 +22,13 @@ def test_resume_no_attempts_always_creates_new_id(tmp_exman_path, monkeypatch):
         exman, "_current_git_state", lambda: (parent_hash, False)
     )
 
-    child, is_new, attempt_num = exman.resume(parent.metadata.exp_id)
+    exp, is_new, attempt_num = exman.resume(parent.metadata.exp_id)
 
-    assert is_new is True
+    assert is_new is False
     assert attempt_num == 1
-    assert child.metadata.exp_id != parent.metadata.exp_id
-    assert child.metadata.parent_id == parent.metadata.exp_id
+    assert exp.metadata.exp_id == parent.metadata.exp_id
+    assert len(exp.metadata.attempts) == 1
+    assert exp.metadata.attempts[0].status == "running"
 
 
 def test_resume_with_attempts_appends_new_attempt(tmp_exman_path, monkeypatch):
