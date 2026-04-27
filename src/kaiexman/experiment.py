@@ -18,6 +18,7 @@ import yaml
 from kaiexman.models import Metadata, MetricsRow
 
 _TAG_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
+_GROUP_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
 _DEFAULT_CRITICAL_PATHS = [
     "src/",
@@ -43,6 +44,26 @@ def validate_tag(tag: str) -> None:
         raise ValueError(
             "Invalid tag format. Use only alphanumeric, dots, underscores, "
             "or hyphens, starting with a letter or number."
+        )
+
+
+def validate_group(group: str) -> None:
+    """Validate a group name against the allowed format.
+
+    Args:
+        group: Group string to validate.
+
+    Raises:
+        ValueError: If the group contains invalid characters or format.
+    """
+    if not group:
+        raise ValueError("Group name cannot be empty.")
+    if len(group) > 32:
+        raise ValueError("Group name must be 32 characters or fewer.")
+    if not _GROUP_PATTERN.match(group):
+        raise ValueError(
+            "Invalid group format. Use only lowercase alphanumeric, "
+            "underscores, or hyphens, starting with a letter or number."
         )
 
 

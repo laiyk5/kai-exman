@@ -21,7 +21,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from kaiexman.config import ConfigManager
-from kaiexman.experiment import Experiment, validate_tag
+from kaiexman.experiment import Experiment, validate_group, validate_tag
 from kaiexman.manager import ExMan
 
 
@@ -139,6 +139,21 @@ def _validate_tag(tag: str) -> None:
         raise click.ClickException(str(exc)) from exc
 
 
+def _validate_group(group: str) -> None:
+    """Validate a group and raise ClickException on failure.
+
+    Args:
+        group: Group name to validate.
+
+    Raises:
+        click.ClickException: If the group format is invalid.
+    """
+    try:
+        validate_group(group)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
 @click.group(cls=AliasedGroup)
 @click.option(
     "--path",
@@ -202,13 +217,21 @@ def cli(
 @click.option("--description", "-d", default="", help="Experiment description")
 @click.option("--tags", "-t", default="", help="Comma-separated tags")
 @click.option("--config", "-c", help="Path to config YAML file")
+@click.option("--group", "-g", default="default", help="Group name (default: default)")
 @click.pass_context
-def init(ctx: click.Context, description: str, tags: str, config: str | None) -> None:
+def init(
+    ctx: click.Context,
+    description: str,
+    tags: str,
+    config: str | None,
+    group: str,
+) -> None:
     """Initialize a new experiment.
 
     Creates a directory structure, captures Git state, and optionally
     loads a YAML configuration file.
     """
+    _validate_group(group)
     cfg = None
     if config and Path(config).exists():
         with open(config, encoding="utf-8") as f:
@@ -217,7 +240,7 @@ def init(ctx: click.Context, description: str, tags: str, config: str | None) ->
     tag_list = [t.strip() for t in tags.split(",")] if tags else []
     cfg_mgr: ConfigManager = ctx.obj["config"]
     exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
-    exp = exman.init(description=description, tags=tag_list, config=cfg)
+    exp = exman.init(description=description, tags=tag_list, config=cfg, group=group)
 
     short_len = cfg_mgr.get("short_id_length", 8)
     short_id = exp.metadata.exp_id[:short_len]
@@ -227,6 +250,7 @@ def init(ctx: click.Context, description: str, tags: str, config: str | None) ->
         table = Table(show_header=False, box=None)
         table.add_row("[bold]Experiment ID:[/bold]", short_id)
         table.add_row("[bold]Path:[/bold]", str(exp.root))
+        table.add_row("[bold]Group:[/bold]", exp.metadata.group)
         table.add_row("[bold]Git Hash:[/bold]", exp.metadata.git_hash or "N/A")
         table.add_row("[bold]Status:[/bold]", exp.metadata.status)
         if exp.metadata.git_dirty:
@@ -246,6 +270,7 @@ def init(ctx: click.Context, description: str, tags: str, config: str | None) ->
         click.echo("Experiment Initialized")
         click.echo(f"Experiment ID: {short_id}")
         click.echo(f"Path: {exp.root}")
+        click.echo(f"Group: {exp.metadata.group}")
         click.echo(f"Git Hash: {exp.metadata.git_hash or 'N/A'}")
         click.echo(f"Status: {exp.metadata.status}")
         if exp.metadata.git_dirty:
@@ -257,6 +282,7 @@ def init(ctx: click.Context, description: str, tags: str, config: str | None) ->
 @click.option("--description", "-d", default="", help="Experiment description")
 @click.option("--tags", "-t", default="", help="Comma-separated tags")
 @click.option("--config", "-c", help="Path to config YAML file")
+@click.option("--group", "-g", help="Group for new experiment (Case B resume)")
 @click.argument("command", nargs=-1, required=True)
 @click.pass_context
 def run(
@@ -265,6 +291,7 @@ def run(
     description: str,
     tags: str,
     config: str | None,
+    group: str | None,
     command: tuple[str, ...],
 ) -> None:
     """Run a command within an experiment context.
@@ -292,12 +319,16 @@ def run(
             description=description,
             tags=tag_list or None,
             config=cfg,
+            group=group,
         )
     else:
+        if group is not None:
+            _validate_group(group)
         exp = exman.init(
             description=description,
             tags=tag_list,
             config=cfg,
+            group=group or "default",
         )
         is_new = True
         attempt_num = 1
@@ -391,6 +422,16 @@ def run(
     help="Filter experiments by tag name",
 )
 @click.option(
+    "--group",
+    "group_filter",
+    help="Filter experiments by group name",
+)
+@click.option(
+    "--tree",
+    is_flag=True,
+    help="Display experiments grouped by group in tree view",
+)
+@click.option(
     "--full-id",
     is_flag=True,
     help="Display full 16-character experiment IDs",
@@ -403,6 +444,8 @@ def list_cmd(
     top: int | None,
     oneline: bool,
     tag_filter: str | None,
+    group_filter: str | None,
+    tree: bool,
     full_id: bool,
 ) -> None:
     """List experiments, optionally sorted by a metric.
@@ -411,7 +454,7 @@ def list_cmd(
     Rich for colors and a pager; otherwise outputs plain text.
     """
     exman = ExMan(root=ctx.obj["path"])
-    experiments = exman.list()
+    experiments = exman.list(group=group_filter)
 
     if tag_filter:
         experiments = [e for e in experiments if tag_filter in e.metadata.tags]
@@ -438,7 +481,12 @@ def list_cmd(
         scored = scored[:top]
 
     short_len = ctx.obj["config"].get("short_id_length", 8)
-    if _use_pager(ctx):
+    if tree:
+        if _use_pager(ctx):
+            _list_tree_rich(ctx, scored, full_id, short_len)
+        else:
+            _list_tree_plain(scored, full_id, short_len)
+    elif _use_pager(ctx):
         _list_rich(ctx, scored, sort_by, order, oneline, full_id, short_len)
     else:
         _list_plain(scored, sort_by, order, oneline, full_id, short_len)
@@ -515,6 +563,98 @@ def _display_id(exp_id: str, full_id: bool, short_length: int = 8) -> str:
         The full ID if full_id is True, otherwise the first short_length chars.
     """
     return exp_id if full_id else exp_id[:short_length]
+
+
+def _list_tree_rich(
+    ctx: click.Context,
+    scored: list[tuple[Experiment, dict[str, dict[str, float]], float | None]],
+    full_id: bool,
+    short_length: int,
+) -> None:
+    """Render experiment list in tree view with Rich.
+
+    Args:
+        ctx: Click context for color settings.
+        scored: List of (experiment, best_metrics, score) tuples.
+        full_id: Whether to display full 16-character IDs.
+        short_length: Number of characters for abbreviated IDs.
+    """
+    console = Console(force_terminal=True, record=True)
+
+    # Group experiments by group name
+    groups: dict[str, list[tuple[Experiment, Any, Any]]] = {}
+    for item in scored:
+        g = item[0].metadata.group
+        groups.setdefault(g, []).append(item)
+
+    for group_name in sorted(groups.keys()):
+        console.print(f"[bold cyan]{group_name}/[/bold cyan]")
+        for exp, _best, _score in groups[group_name]:
+            status_color = _STATUS_COLORS.get(exp.metadata.status, "white")
+            prefix = "-> " if exp.metadata.parent_id else "    "
+            disp_id = _display_id(exp.metadata.exp_id, full_id, short_length)
+            desc = exp.metadata.description or "[dim](no description)[/dim]"
+            tags_part = ""
+            if exp.metadata.tags:
+                tags_display = ", ".join(exp.metadata.tags)
+                tags_part = f" [bold magenta][{tags_display}][/bold magenta]"
+            line = (
+                f"{prefix}[yellow]{disp_id}[/yellow]  "
+                f"[{status_color}]{exp.metadata.status}[/{status_color}]  "
+                f"{desc}{tags_part}"
+            )
+            console.print(line)
+            if exp.metadata.attempts:
+                attempt_strs = [
+                    f"{a.reason or f'run_{a.sequence}'} ({a.status})"
+                    for a in exp.metadata.attempts
+                ]
+                console.print(f"        Attempts: {', '.join(attempt_strs)}")
+        console.print("")
+
+    text = console.export_text(styles=True)
+    os.environ.setdefault("LESS", "-R")
+    click.echo_via_pager(text)
+
+
+def _list_tree_plain(
+    scored: list[tuple[Experiment, dict[str, dict[str, float]], float | None]],
+    full_id: bool,
+    short_length: int,
+) -> None:
+    """Render experiment list in tree view as plain text.
+
+    Args:
+        scored: List of (experiment, best_metrics, score) tuples.
+        full_id: Whether to display full 16-character IDs.
+        short_length: Number of characters for abbreviated IDs.
+    """
+    groups: dict[str, list[tuple[Experiment, Any, Any]]] = {}
+    for item in scored:
+        g = item[0].metadata.group
+        groups.setdefault(g, []).append(item)
+
+    for group_name in sorted(groups.keys()):
+        click.echo(f"{group_name}/")
+        for exp, _best, _score in groups[group_name]:
+            prefix = "-> " if exp.metadata.parent_id else "    "
+            disp_id = _display_id(exp.metadata.exp_id, full_id, short_length)
+            desc = exp.metadata.description or "(no description)"
+            tags_part = ""
+            if exp.metadata.tags:
+                tags_display = ", ".join(exp.metadata.tags)
+                tags_part = f" [{tags_display}]"
+            line = (
+                f"{prefix}{disp_id}  {exp.metadata.status}  {desc}{tags_part}"
+            )
+            click.echo(line)
+            if exp.metadata.attempts:
+                attempt_strs = [
+                    f"{a.reason or f'run_{a.sequence}'} ({a.status})"
+                    for a in exp.metadata.attempts
+                ]
+                click.echo(f"        Attempts: {', '.join(attempt_strs)}")
+        click.echo("")
 
 
 def _list_rich(
@@ -775,6 +915,7 @@ def show(ctx: click.Context, exp_id: str, full_id: bool) -> None:
 
         meta_table = Table(show_header=False, box=None)
         meta_table.add_row("[bold]ID[/bold]", disp_id)
+        meta_table.add_row("[bold]Group[/bold]", exp.metadata.group)
         meta_table.add_row("[bold]Status[/bold]", exp.metadata.status)
         meta_table.add_row("[bold]Description[/bold]", exp.metadata.description or "-")
         meta_table.add_row(
@@ -853,6 +994,7 @@ def show(ctx: click.Context, exp_id: str, full_id: bool) -> None:
             console.print(panel)
     else:
         click.echo(f"ID: {disp_id}")
+        click.echo(f"Group: {exp.metadata.group}")
         click.echo(f"Status: {exp.metadata.status}")
         click.echo(f"Description: {exp.metadata.description or '-'}")
         click.echo(f"Data Version: {exp.metadata.data_version or '-'}")
@@ -926,6 +1068,166 @@ def tag_cmd(
         console.print(f"[bold green]Tag '{tag_name}' {action} {short_id}.[/bold green]")
     else:
         click.echo(f"Tag '{tag_name}' {action} {short_id}.")
+
+
+@cli.command()
+@click.option("--group", help="Filter tags to a specific group")
+@click.pass_context
+def tags(ctx: click.Context, group: str | None) -> None:
+    """List all tags across experiments, optionally filtered by group."""
+    exman = ExMan(root=ctx.obj["path"])
+    experiments = exman.list(group=group)
+
+    tag_counts: dict[str, int] = {}
+    tag_groups: dict[str, dict[str, int]] = {}
+
+    for exp in experiments:
+        for tag in exp.metadata.tags:
+            tag_counts[tag] = tag_counts.get(tag, 0) + 1
+            tag_groups.setdefault(tag, {})
+            tag_groups[tag][exp.metadata.group] = (
+                tag_groups[tag].get(exp.metadata.group, 0) + 1
+            )
+
+    if not tag_counts:
+        click.echo("No tags found.")
+        return
+
+    if sys.stdout.isatty():
+        console = _get_console(ctx)
+        table = Table(show_header=True, header_style="bold")
+        table.add_column("Tag", style="magenta")
+        table.add_column("Count", style="blue", justify="right")
+        if group is None:
+            table.add_column("Groups")
+
+        for tag in sorted(tag_counts.keys()):
+            count = tag_counts[tag]
+            if group is None:
+                group_parts = [
+                    f"{g}({c})" for g, c in sorted(tag_groups[tag].items())
+                ]
+                table.add_row(tag, str(count), ", ".join(group_parts))
+            else:
+                table.add_row(tag, str(count))
+
+        console.print(table)
+    else:
+        for tag in sorted(tag_counts.keys()):
+            count = tag_counts[tag]
+            if group is None:
+                group_parts = [
+                    f"{g}:{c}" for g, c in sorted(tag_groups[tag].items())
+                ]
+                click.echo(f"{tag:<20} {count:>3}  {', '.join(group_parts)}")
+            else:
+                click.echo(f"{tag:<20} {count:>3}")
+
+
+@cli.command()
+@click.argument("exp_id")
+@click.option("--group", "-g", required=True, help="Target group name")
+@click.pass_context
+def move(ctx: click.Context, exp_id: str, group: str) -> None:
+    """Move an experiment to a different group."""
+    _validate_group(group)
+    cfg_mgr: ConfigManager = ctx.obj["config"]
+    exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
+    resolved_id = _resolve_exp_id(exman, exp_id)
+
+    try:
+        exp = exman.move(resolved_id, group)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    short_len = cfg_mgr.get("short_id_length", 8)
+    short_id = exp.metadata.exp_id[:short_len]
+    if sys.stdout.isatty():
+        console = _get_console(ctx)
+        console.print(
+            f"[bold green]Experiment {short_id} moved to group "
+            f"'{exp.metadata.group}'.[/bold green]"
+        )
+    else:
+        click.echo(f"Experiment {short_id} moved to group '{exp.metadata.group}'.")
+
+
+@cli.command()
+@click.option(
+    "--threshold",
+    type=float,
+    help="Jaccard similarity threshold (default: from config)",
+)
+@click.option("--apply", is_flag=True, help="Apply suggested group moves")
+@click.pass_context
+def suggest_groups(
+    ctx: click.Context,
+    threshold: float | None,
+    apply: bool,
+) -> None:
+    """Suggest group assignments based on config key similarity.
+
+    Computes Jaccard similarity between experiment config keys and
+    suggests the most similar group's assignment for each experiment.
+    """
+    cfg_mgr: ConfigManager = ctx.obj["config"]
+    exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
+
+    if threshold is not None:
+        # Temporarily override config for this run
+        original = exman.config._config.get("cluster_threshold")
+        exman.config._config["cluster_threshold"] = threshold
+
+    suggestions = exman.suggest_groups()
+
+    if threshold is not None and original is not None:
+        exman.config._config["cluster_threshold"] = original
+
+    if not suggestions:
+        click.echo("No group suggestions above the similarity threshold.")
+        return
+
+    if sys.stdout.isatty():
+        console = _get_console(ctx)
+        table = Table(show_header=True, header_style="bold")
+        table.add_column("Experiment")
+        table.add_column("Current Group")
+        table.add_column("Suggested Group")
+        table.add_column("Similarity")
+
+        for exp, suggested_group, score in suggestions:
+            short_len = cfg_mgr.get("short_id_length", 8)
+            short_id = exp.metadata.exp_id[:short_len]
+            table.add_row(
+                short_id,
+                exp.metadata.group,
+                suggested_group,
+                f"{score:.2f}",
+            )
+        console.print(table)
+    else:
+        short_len = cfg_mgr.get("short_id_length", 8)
+        for exp, suggested_group, score in suggestions:
+            short_id = exp.metadata.exp_id[:short_len]
+            click.echo(
+                f"{short_id}  {exp.metadata.group} -> {suggested_group}  "
+                f"({score:.2f})"
+            )
+
+    if apply:
+        if not sys.stdout.isatty():
+            raise click.ClickException(
+                "Non-TTY operation requires explicit confirmation. "
+                "Use --apply in an interactive terminal, or use 'move' directly."
+            )
+        if not click.confirm("Apply suggested group moves?"):
+            click.echo("Aborted.")
+            return
+
+        for exp, suggested_group, _score in suggestions:
+            exman.move(exp.metadata.exp_id, suggested_group)
+            short_id = exp.metadata.exp_id[: cfg_mgr.get("short_id_length", 8)]
+            click.echo(f"Moved {short_id} to group '{suggested_group}'.")
 
 
 @cli.command()

@@ -58,6 +58,7 @@ class Metadata(BaseModel):
     status: str = "running"
     parent_id: str = ""
     attempts: list[Attempt] = Field(default_factory=list)
+    group: str = "default"
 
 
 class MetricsRow(BaseModel):

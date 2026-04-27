@@ -28,6 +28,7 @@ class ConfigManager:
         "strict_mode": False,
         "trash_max_count": 50,
         "trash_max_size_gb": 5.0,
+        "cluster_threshold": 0.5,
     }
 
     def __init__(self, cli_overrides: dict[str, Any] | None = None) -> None:
