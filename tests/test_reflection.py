@@ -52,40 +52,22 @@ def test_init_cli_accepts_description(tmp_exman_path):
 # ---------------------------------------------------------------------------
 
 
-def test_run_cli_rejects_missing_description(tmp_exman_path):
+def test_run_cli_rejects_no_default_experiment(tmp_exman_path):
     runner = CliRunner()
     result = runner.invoke(
         cli,
         ["--path", tmp_exman_path, "run", "--", "echo", "hello"],
     )
     assert result.exit_code != 0
-    assert "description is required" in result.output.lower()
-
-
-def test_run_cli_accepts_description(tmp_exman_path):
-    runner = CliRunner()
-    result = runner.invoke(
-        cli,
-        [
-            "--path",
-            tmp_exman_path,
-            "run",
-            "--description",
-            "Quick smoke test",
-            "--",
-            "echo",
-            "hello",
-        ],
-    )
-    assert result.exit_code == 0
+    assert "no default experiment set" in result.output.lower()
 
 
 # ---------------------------------------------------------------------------
-# resume: description is mandatory and does NOT inherit parent
+# init --inherit: description is mandatory and does NOT inherit parent
 # ---------------------------------------------------------------------------
 
 
-def test_resume_cli_rejects_missing_description(tmp_exman_path, monkeypatch):
+def test_init_inherit_cli_rejects_missing_description(tmp_exman_path):
     exman = ExMan(root=tmp_exman_path)
     parent = exman.init(description="parent")
 
@@ -94,31 +76,22 @@ def test_resume_cli_rejects_missing_description(tmp_exman_path, monkeypatch):
     parent.write_metadata()
     exman.finish(parent.metadata.exp_id, summary="Done.")
 
-    monkeypatch.setattr(
-        exman, "_current_git_state", lambda: ("different_hash", True)
-    )
-
     runner = CliRunner()
     result = runner.invoke(
         cli,
         [
             "--path",
             tmp_exman_path,
-            "run",
+            "init",
             "--inherit",
             parent.metadata.exp_id,
-            "--",
-            "echo",
-            "hello",
         ],
     )
     assert result.exit_code != 0
     assert "description is required" in result.output.lower()
 
 
-def test_resume_cli_fork_does_not_inherit_description(
-    tmp_exman_path, monkeypatch
-):
+def test_init_inherit_cli_fork_does_not_inherit_description(tmp_exman_path):
     exman = ExMan(root=tmp_exman_path)
     parent = exman.init(description="parent desc", tags=["baseline"])
 
@@ -127,31 +100,24 @@ def test_resume_cli_fork_does_not_inherit_description(
     parent.write_metadata()
     exman.finish(parent.metadata.exp_id, summary="Done.")
 
-    monkeypatch.setattr(
-        exman, "_current_git_state", lambda: ("different_hash", True)
-    )
-
     runner = CliRunner()
     result = runner.invoke(
         cli,
         [
             "--path",
             tmp_exman_path,
-            "run",
+            "init",
             "--inherit",
             parent.metadata.exp_id,
             "--description",
             "Fork with new intent",
-            "--",
-            "echo",
-            "hello",
         ],
     )
     assert result.exit_code == 0
 
     experiments = exman.list()
     child = next(
-        (e for e in experiments if e.metadata.parent_id == parent.metadata.exp_id),
+        (e for e in experiments if parent.metadata.exp_id in e.metadata.parent_ids),
         None,
     )
     assert child is not None

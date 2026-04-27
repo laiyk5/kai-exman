@@ -351,7 +351,7 @@ def test_resume_case_b_honors_group_parameter(tmp_exman_path, monkeypatch):
     assert is_new is True
     assert child.metadata.group == "eval"
     assert child.root.parent.name == "eval"
-    assert child.metadata.parent_id == parent.metadata.exp_id
+    assert child.metadata.parent_ids == [parent.metadata.exp_id]
 
 
 # ---------------------------------------------------------------------------
@@ -396,7 +396,7 @@ def test_resume_terminal_success_creates_child_case_b(tmp_exman_path, monkeypatc
     )
     assert is_new is True
     assert attempt_num == 1
-    assert child.metadata.parent_id == parent.metadata.exp_id
+    assert child.metadata.parent_ids == [parent.metadata.exp_id]
 
 
 def test_resume_terminal_failed_creates_child_case_b(tmp_exman_path, monkeypatch):
@@ -421,7 +421,7 @@ def test_resume_terminal_failed_creates_child_case_b(tmp_exman_path, monkeypatch
     )
     assert is_new is True
     assert attempt_num == 1
-    assert child.metadata.parent_id == parent.metadata.exp_id
+    assert child.metadata.parent_ids == [parent.metadata.exp_id]
 
 
 def test_resume_allows_non_terminal(tmp_exman_path, monkeypatch):

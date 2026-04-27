@@ -8,7 +8,7 @@ Pydantic v2.
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class LockedExperimentError(RuntimeError):
@@ -54,8 +54,8 @@ class Metadata(BaseModel):
         tags: List of user-defined tags for categorization.
         data_version: Optional data version or hash for reproducibility.
         description: Human-readable description of the experiment.
-        status: Current experiment status (default: "running").
-        parent_id: ID of the parent experiment if this is an inherited run.
+        status: Current experiment status (default: "draft").
+        parent_ids: List of parent experiment IDs for inheritance tracking.
         attempts: List of execution attempts for resumption tracking.
     """
 
@@ -66,8 +66,8 @@ class Metadata(BaseModel):
     tags: list[str] = Field(default_factory=list)
     data_version: str = ""
     description: str = ""
-    status: str = "running"
-    parent_id: str = ""
+    status: str = "draft"
+    parent_ids: list[str] = Field(default_factory=list)
     attempts: list[Attempt] = Field(default_factory=list)
     group: str = "default"
     finished_at: str = ""
@@ -75,6 +75,16 @@ class Metadata(BaseModel):
     summary: str = ""
     deletable: bool = False
     data_hash: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _upgrade_parent_id(cls, data: Any) -> Any:
+        """Upgrade legacy scalar parent_id to parent_ids list."""
+        if isinstance(data, dict) and "parent_id" in data:
+            parent_id = data.pop("parent_id")
+            if parent_id and "parent_ids" not in data:
+                data["parent_ids"] = [parent_id]
+        return data
 
 
 class MetricsRow(BaseModel):

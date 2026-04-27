@@ -92,7 +92,7 @@ def test_init_cli_data_path(tmp_exman_path):
 
 
 def test_run_cli_data_path(tmp_exman_path, monkeypatch):
-    """run --data-path should populate data_hash for a new experiment."""
+    """run --data-path should populate data_hash for an existing experiment."""
     data_file = Path(tmp_exman_path) / "train.csv"
     data_file.write_text("x,y\n1,2\n")
 
@@ -101,6 +101,9 @@ def test_run_cli_data_path(tmp_exman_path, monkeypatch):
         Experiment, "_git_info", lambda *args, **kwargs: ("abc123", False)
     )
 
+    exman = ExMan(root=tmp_exman_path)
+    exp = exman.init(description="run with data")
+
     runner = CliRunner()
     result = runner.invoke(
         cli,
@@ -108,8 +111,7 @@ def test_run_cli_data_path(tmp_exman_path, monkeypatch):
             "--path",
             tmp_exman_path,
             "run",
-            "--description",
-            "run with data",
+            exp.metadata.exp_id,
             "--data-path",
             str(data_file),
             "--",
@@ -119,9 +121,8 @@ def test_run_cli_data_path(tmp_exman_path, monkeypatch):
     )
     assert result.exit_code == 0
 
-    exman = ExMan(root=tmp_exman_path)
-    exp = exman.list()[0]
-    assert len(exp.metadata.data_hash) == 64
+    reloaded = exman.get(exp.metadata.exp_id)
+    assert len(reloaded.metadata.data_hash) == 64
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +136,9 @@ def test_run_records_command_in_attempt(tmp_exman_path, monkeypatch):
         Experiment, "_git_info", lambda *args, **kwargs: ("abc123", False)
     )
 
+    exman = ExMan(root=tmp_exman_path)
+    exp = exman.init(description="command test")
+
     runner = CliRunner()
     result = runner.invoke(
         cli,
@@ -142,8 +146,7 @@ def test_run_records_command_in_attempt(tmp_exman_path, monkeypatch):
             "--path",
             tmp_exman_path,
             "run",
-            "--description",
-            "command test",
+            exp.metadata.exp_id,
             "--",
             "echo",
             "hello world",
@@ -151,10 +154,9 @@ def test_run_records_command_in_attempt(tmp_exman_path, monkeypatch):
     )
     assert result.exit_code == 0
 
-    exman = ExMan(root=tmp_exman_path)
-    exp = exman.list()[0]
-    assert len(exp.metadata.attempts) == 1
-    assert exp.metadata.attempts[0].command == ["echo", "hello world"]
+    reloaded = exman.get(exp.metadata.exp_id)
+    assert len(reloaded.metadata.attempts) == 1
+    assert reloaded.metadata.attempts[0].command == ["echo", "hello world"]
 
 
 def test_retry_records_command_in_attempt(tmp_exman_path, monkeypatch):

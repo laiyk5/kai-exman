@@ -106,7 +106,7 @@ def test_resume_logic_dirty_creates_new_experiment(tmp_exman_path, monkeypatch):
     assert is_new is True
     assert attempt_num == 1
     assert child.metadata.exp_id != parent.metadata.exp_id
-    assert child.metadata.parent_id == parent.metadata.exp_id
+    assert child.metadata.parent_ids == [parent.metadata.exp_id]
     assert child.metadata.description == "child"
 
 

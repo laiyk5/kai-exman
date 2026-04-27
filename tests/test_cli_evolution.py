@@ -13,14 +13,14 @@ from kaiexman import ExMan
 from kaiexman.cli import cli
 
 # ---------------------------------------------------------------------------
-# run --retry
+# run on existing experiment
 # ---------------------------------------------------------------------------
 
 
-def test_run_retry_on_running_succeeds(tmp_exman_path, monkeypatch):
-    """run --retry on a running experiment appends an attempt."""
+def test_run_on_running_appends_attempt(tmp_exman_path, monkeypatch):
+    """run <exp_id> on a running experiment appends an attempt."""
     exman = ExMan(root=tmp_exman_path)
-    parent = exman.init(description="retry target")
+    parent = exman.init(description="run target")
 
     from kaiexman.models import Attempt
 
@@ -40,7 +40,6 @@ def test_run_retry_on_running_succeeds(tmp_exman_path, monkeypatch):
             "--path",
             tmp_exman_path,
             "run",
-            "--retry",
             parent.metadata.exp_id,
             "--",
             "echo",
@@ -52,8 +51,8 @@ def test_run_retry_on_running_succeeds(tmp_exman_path, monkeypatch):
     assert len(reloaded.metadata.attempts) == 2
 
 
-def test_run_retry_on_finished_fails(tmp_exman_path, monkeypatch):
-    """run --retry on a finished experiment raises a clear error."""
+def test_run_on_finished_fails(tmp_exman_path, monkeypatch):
+    """run <exp_id> on a finished experiment raises a clear error."""
     exman = ExMan(root=tmp_exman_path)
     parent = exman.init(description="finished parent")
 
@@ -76,7 +75,6 @@ def test_run_retry_on_finished_fails(tmp_exman_path, monkeypatch):
             "--path",
             tmp_exman_path,
             "run",
-            "--retry",
             parent.metadata.exp_id,
             "--",
             "echo",
@@ -84,11 +82,11 @@ def test_run_retry_on_finished_fails(tmp_exman_path, monkeypatch):
         ],
     )
     assert result.exit_code != 0
-    assert "use `run --inherit`" in result.output.lower()
+    assert "finished" in result.output.lower()
 
 
-def test_run_retry_on_aborted_fails(tmp_exman_path, monkeypatch):
-    """run --retry on an aborted experiment raises a clear error."""
+def test_run_on_aborted_fails(tmp_exman_path, monkeypatch):
+    """run <exp_id> on an aborted experiment raises a clear error."""
     exman = ExMan(root=tmp_exman_path)
     parent = exman.init(description="aborted parent")
 
@@ -97,11 +95,6 @@ def test_run_retry_on_aborted_fails(tmp_exman_path, monkeypatch):
     parent.metadata.attempts.append(Attempt(sequence=1, status="running"))
     parent.write_metadata()
 
-    monkeypatch.setattr(
-        ExMan, "_current_git_state", lambda _self: (parent.metadata.git_hash, False)
-    )
-
-    # Abort directly via manager
     last = parent.metadata.attempts[-1]
     last.exit_code = None
     last.status = "aborted"
@@ -115,7 +108,6 @@ def test_run_retry_on_aborted_fails(tmp_exman_path, monkeypatch):
             "--path",
             tmp_exman_path,
             "run",
-            "--retry",
             parent.metadata.exp_id,
             "--",
             "echo",
@@ -127,12 +119,12 @@ def test_run_retry_on_aborted_fails(tmp_exman_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# run --inherit
+# init --inherit
 # ---------------------------------------------------------------------------
 
 
-def test_run_inherit_on_finished_succeeds(tmp_exman_path, monkeypatch):
-    """run --inherit on a finished experiment creates a child."""
+def test_init_inherit_on_finished_succeeds(tmp_exman_path, monkeypatch):
+    """init --inherit on a finished experiment creates a draft child."""
     exman = ExMan(root=tmp_exman_path)
     parent = exman.init(description="finished parent")
 
@@ -144,38 +136,32 @@ def test_run_inherit_on_finished_succeeds(tmp_exman_path, monkeypatch):
     parent.write_metadata()
     exman.finish(parent.metadata.exp_id, summary="Done.")
 
-    monkeypatch.setattr(
-        ExMan, "_current_git_state", lambda _self: ("different_hash", True)
-    )
-
     runner = CliRunner()
     result = runner.invoke(
         cli,
         [
             "--path",
             tmp_exman_path,
-            "run",
+            "init",
             "--inherit",
             parent.metadata.exp_id,
             "--description",
             "Child experiment",
-            "--",
-            "echo",
-            "hello",
         ],
     )
     assert result.exit_code == 0
     experiments = exman.list()
     child = next(
-        (e for e in experiments if e.metadata.parent_id == parent.metadata.exp_id),
+        (e for e in experiments if parent.metadata.exp_id in e.metadata.parent_ids),
         None,
     )
     assert child is not None
     assert child.metadata.description == "Child experiment"
+    assert child.metadata.status == "draft"
 
 
-def test_run_inherit_on_running_fails(tmp_exman_path, monkeypatch):
-    """run --inherit on a running experiment raises a clear error."""
+def test_init_inherit_on_running_fails(tmp_exman_path, monkeypatch):
+    """init --inherit on a running experiment raises a clear error."""
     exman = ExMan(root=tmp_exman_path)
     parent = exman.init(description="running parent")
 
@@ -186,32 +172,25 @@ def test_run_inherit_on_running_fails(tmp_exman_path, monkeypatch):
     )
     parent.write_metadata()
 
-    monkeypatch.setattr(
-        ExMan, "_current_git_state", lambda _self: (parent.metadata.git_hash, False)
-    )
-
     runner = CliRunner()
     result = runner.invoke(
         cli,
         [
             "--path",
             tmp_exman_path,
-            "run",
+            "init",
             "--inherit",
             parent.metadata.exp_id,
             "--description",
             "Child",
-            "--",
-            "echo",
-            "hello",
         ],
     )
     assert result.exit_code != 0
-    assert "use `run --retry`" in result.output.lower()
+    assert "still running" in result.output.lower()
 
 
-def test_run_inherit_on_aborted_fails(tmp_exman_path, monkeypatch):
-    """run --inherit on an aborted experiment raises a clear error."""
+def test_init_inherit_on_aborted_fails(tmp_exman_path, monkeypatch):
+    """init --inherit on an aborted experiment raises a clear error."""
     exman = ExMan(root=tmp_exman_path)
     parent = exman.init(description="aborted parent")
 
@@ -226,51 +205,21 @@ def test_run_inherit_on_aborted_fails(tmp_exman_path, monkeypatch):
     parent.write_metadata()
     exman.finish(parent.metadata.exp_id, summary="Aborted by user.")
 
-    monkeypatch.setattr(
-        ExMan, "_current_git_state", lambda _self: ("different_hash", True)
-    )
-
     runner = CliRunner()
     result = runner.invoke(
         cli,
         [
             "--path",
             tmp_exman_path,
-            "run",
+            "init",
             "--inherit",
             parent.metadata.exp_id,
             "--description",
             "Child",
-            "--",
-            "echo",
-            "hello",
         ],
     )
     assert result.exit_code != 0
     assert "aborted" in result.output.lower()
-    assert "cannot be inherited" in result.output.lower()
-
-
-def test_run_retry_and_inherit_mutually_exclusive(tmp_exman_path):
-    """Using both --retry and --inherit should fail."""
-    runner = CliRunner()
-    result = runner.invoke(
-        cli,
-        [
-            "--path",
-            tmp_exman_path,
-            "run",
-            "--retry",
-            "abc123",
-            "--inherit",
-            "def456",
-            "--",
-            "echo",
-            "hello",
-        ],
-    )
-    assert result.exit_code != 0
-    assert "mutually exclusive" in result.output.lower()
 
 
 # ---------------------------------------------------------------------------

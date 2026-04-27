@@ -138,7 +138,7 @@ def test_log_view_shows_status_and_group(tmp_exman_path):
     runner = CliRunner()
     result = runner.invoke(cli.cli, ["--path", tmp_exman_path, "list"])
     assert result.exit_code == 0
-    assert "running" in result.output
+    assert "draft" in result.output
     assert "train" in result.output
     assert "v1" in result.output
     assert "baseline" in result.output
@@ -182,7 +182,7 @@ def test_oneline_shows_compact_format(tmp_exman_path):
         cli.cli, ["--path", tmp_exman_path, "list", "--oneline"]
     )
     assert result.exit_code == 0
-    assert "RUNNING" in result.output
+    assert "DRAFT" in result.output
     assert "train" in result.output
     assert "baseline" in result.output
     assert "v1" in result.output

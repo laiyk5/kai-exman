@@ -172,7 +172,7 @@ class ExMan:
             index["experiments"][meta.exp_id] = {
                 "rel_path": rel_path,
                 "group": meta.group,
-                "parent_id": meta.parent_id,
+                "parent_ids": list(meta.parent_ids),
                 "tags": list(meta.tags),
                 "status": meta.status,
             }
@@ -231,7 +231,7 @@ class ExMan:
         index["experiments"][exp_id] = {
             "rel_path": rel_path,
             "group": meta.group,
-            "parent_id": meta.parent_id,
+            "parent_ids": list(meta.parent_ids),
             "tags": list(meta.tags),
             "status": meta.status,
         }
@@ -302,6 +302,116 @@ class ExMan:
     # Public API
     # ------------------------------------------------------------------
 
+    def _validate_parents(self, parent_ids: List[str]) -> List[Experiment]:
+        """Validate parent experiments for inheritance.
+
+        All parents must exist and be finished (not running or aborted).
+
+        Args:
+            parent_ids: List of parent experiment IDs.
+
+        Returns:
+            List of validated parent Experiment instances.
+
+        Raises:
+            ValueError: If any parent is missing, running, or aborted.
+        """
+        parents: List[Experiment] = []
+        for pid in parent_ids:
+            parent = self.get(pid)
+            if parent is None:
+                raise ValueError(f"Parent experiment '{pid}' not found")
+            if parent.metadata.status == "aborted":
+                raise ValueError(
+                    f"Parent experiment '{pid}' was aborted and cannot be inherited"
+                )
+            if not parent.metadata.locked:
+                raise ValueError(
+                    f"Parent experiment '{pid}' is still running. "
+                    "Finish it before inheriting."
+                )
+            parents.append(parent)
+        return parents
+
+    def _merge_parent_tags(
+        self, parents: List[Experiment], explicit_tags: List[str] | None
+    ) -> List[str]:
+        """Merge tags from all parents, overridden by explicit tags.
+
+        Args:
+            parents: List of parent experiments.
+            explicit_tags: User-provided tags, or None to inherit.
+
+        Returns:
+            Merged tag list.
+        """
+        if explicit_tags is not None:
+            return explicit_tags
+        merged: set[str] = set()
+        for p in parents:
+            merged.update(p.metadata.tags)
+        return sorted(merged)
+
+    def _merge_parent_config(
+        self, parents: List[Experiment], explicit_config: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        """Deep-merge configs from all parents, overridden by explicit config.
+
+        Args:
+            parents: List of parent experiments.
+            explicit_config: User-provided config, or None to inherit.
+
+        Returns:
+            Merged config dict, or None.
+        """
+        if explicit_config is not None:
+            return explicit_config
+        if not parents:
+            return None
+        merged: dict[str, Any] = {}
+        for p in parents:
+            if p.config:
+                merged.update(p.config)
+        return merged
+
+    def _copy_parent_checkpoints(
+        self,
+        parents: List[Experiment],
+        child_ckpt: Path,
+    ) -> None:
+        """Copy or symlink checkpoints from all parents into the child.
+
+        Name collisions are resolved by prefixing with the parent's short ID.
+
+        Args:
+            parents: List of parent experiments.
+            child_ckpt: Path to the child's checkpoints directory.
+        """
+        seen_names: set[str] = set()
+        for parent in parents:
+            parent_ckpt = parent.root / "artifacts" / "checkpoints"
+            if not parent_ckpt.exists():
+                continue
+            short_id = parent.metadata.exp_id[:8]
+            for src in parent_ckpt.iterdir():
+                dest_name = src.name
+                if dest_name in seen_names:
+                    dest_name = f"{short_id}_{src.name}"
+                seen_names.add(dest_name)
+                dest = child_ckpt / dest_name
+                try:
+                    os.symlink(src.resolve(), dest)
+                except OSError:
+                    warnings.warn(
+                        f"Symlink failed for {src.name}, falling back to copy. "
+                        "Enable Developer Mode on Windows for symlink support.",
+                        stacklevel=2,
+                    )
+                    if src.is_dir():
+                        shutil.copytree(src, dest, dirs_exist_ok=True)
+                    else:
+                        shutil.copy2(src, dest)
+
     def init(
         self,
         description: str = "",
@@ -310,11 +420,14 @@ class ExMan:
         data_version: str = "",
         group: str = "default",
         data_path: str = "",
+        parent_ids: List[str] | None = None,
     ) -> Experiment:
-        """Create and initialize a new experiment.
+        """Create and initialize a new experiment (draft).
 
         Creates the experiment directory structure under the specified group,
         writes metadata, config (if provided), and snapshots the environment.
+        If parent_ids are provided, the new experiment inherits from finished
+        parents: tags and configs are merged, and checkpoints are copied.
 
         Args:
             description: Human-readable description of the experiment.
@@ -324,11 +437,16 @@ class ExMan:
             group: Group name for physical organization (default: "default").
             data_path: Optional path to a dataset file or directory. A BLAKE2b
                 hash is computed automatically and stored in metadata.
+            parent_ids: Optional list of finished parent experiment IDs.
+                When provided, the child inherits tags, config, and checkpoints.
 
         Returns:
-            The initialized Experiment instance.
+            The initialized Experiment instance (status: draft, attempts: empty).
         """
         validate_group(group)
+        parent_ids = parent_ids or []
+        parents = self._validate_parents(parent_ids) if parent_ids else []
+
         date_str = datetime.now().strftime("%Y%m%d")
         exp_id = self._next_id()
         tags_or_desc = "_".join(tags) if tags else description
@@ -341,30 +459,175 @@ class ExMan:
         (folder / "artifacts" / "checkpoints").mkdir(parents=True, exist_ok=True)
         (folder / "artifacts" / "plots").mkdir(parents=True, exist_ok=True)
 
-        tag_list = tags or []
+        tag_list = self._merge_parent_tags(parents, tags)
         for tag in tag_list:
             validate_tag(tag)
+
+        merged_config = self._merge_parent_config(parents, config)
+
         meta = Metadata(
             exp_id=exp_id,
             tags=tag_list,
             description=description,
             data_version=data_version,
             group=group,
+            parent_ids=parent_ids,
         )
         if data_path:
             meta.data_hash = Experiment.compute_data_hash(data_path)
         exp = Experiment(
             root=folder,
             metadata=meta,
-            config=config,
+            config=merged_config,
             critical_paths=self.config.get("critical_paths"),
         )
         exp.write_metadata()
-        if config is not None:
+        if merged_config is not None:
             exp.write_config()
         exp.snapshot_env()
+
+        if parents:
+            self._copy_parent_checkpoints(parents, folder / "artifacts" / "checkpoints")
+
         self._update_index(exp, "add")
         return exp
+
+    def run(
+        self,
+        exp_id: str,
+        command: list[str],
+        data_path: str = "",
+    ) -> tuple[Experiment, int]:
+        """Execute a command on an existing experiment.
+
+        Creates attempt 1 for a draft, or appends an attempt for a running
+        experiment. Validates git state for retries.
+
+        Args:
+            exp_id: Full experiment identifier.
+            command: Command and arguments to execute.
+            data_path: Optional path to a dataset file or directory for
+                automatic BLAKE2b hash.
+
+        Returns:
+            Tuple of (experiment, exit_code).
+
+        Raises:
+            ValueError: If the experiment is not found, finished, or aborted.
+            RuntimeError: If the workspace has diverged for a retry.
+        """
+        exp = self.get(exp_id)
+        if exp is None:
+            raise ValueError(f"Experiment '{exp_id}' not found")
+
+        if exp.metadata.status == "aborted":
+            raise ValueError(
+                f"Experiment '{exp_id}' was aborted and cannot be run."
+            )
+
+        is_draft = not exp.metadata.attempts
+        is_sealed = exp.metadata.locked or exp.metadata.status in _TERMINAL_STATUSES
+
+        if is_sealed:
+            raise ValueError(
+                f"Experiment '{exp_id}' is finished. "
+                "Use init() with parent_ids to create a child."
+            )
+
+        # Validate git state for retries (not for first run on draft)
+        if not is_draft:
+            current_hash, current_dirty = self._current_git_state()
+            is_clean = (
+                current_hash
+                and current_hash == exp.metadata.git_hash
+                and not current_dirty
+            )
+            if not is_clean:
+                raise RuntimeError(
+                    "Workspace has diverged from the experiment's git state. "
+                    "Finish or abort this experiment first, then init() with "
+                    "parent_ids to create a child record."
+                )
+
+        attempt_num = len(exp.metadata.attempts) + 1
+        new_attempt = Attempt(
+            sequence=attempt_num,
+            status="running",
+            reason=f"run_{attempt_num}",
+            command=list(command),
+        )
+        exp.metadata.attempts.append(new_attempt)
+        exp.metadata.status = "running"
+        if data_path:
+            exp.metadata.data_hash = Experiment.compute_data_hash(data_path)
+        exp.write_metadata()
+        self._update_index(exp, "add")
+
+        # Execute the command
+        import subprocess
+
+        env = os.environ.copy()
+        env["KAI_EXMAN_RESUME"] = "1" if attempt_num > 1 else "0"
+        env["KAI_EXMAN_ATTEMPT_COUNT"] = str(attempt_num)
+        if exp.metadata.parent_ids:
+            parent = self.get(exp.metadata.parent_ids[0])
+            if parent is not None:
+                env["KAI_EXMAN_PARENT_PATH"] = str(parent.root)
+
+        result = subprocess.run(command, env=env)
+
+        # Update the last attempt with the outcome
+        last_attempt = exp.metadata.attempts[-1]
+        last_attempt.end_time = datetime.now().isoformat()
+        last_attempt.exit_code = result.returncode
+        if result.returncode == 0:
+            last_attempt.status = "success"
+        elif result.returncode is not None and (
+            result.returncode < 0 or result.returncode >= 128
+        ):
+            last_attempt.status = "interrupted"
+        else:
+            last_attempt.status = "failed"
+        exp.write_metadata()
+        self._update_index(exp, "add")
+
+        return exp, result.returncode
+
+    def retry(
+        self,
+        exp_id: str,
+        command: list[str],
+        data_path: str = "",
+    ) -> tuple[Experiment, int]:
+        """Retry a running experiment by appending a new attempt.
+
+        Equivalent to run() but raises if the experiment is not running.
+
+        Args:
+            exp_id: Full experiment identifier.
+            command: Command and arguments to execute.
+            data_path: Optional path to a dataset file or directory.
+
+        Returns:
+            Tuple of (experiment, exit_code).
+
+        Raises:
+            ValueError: If the experiment is not running.
+        """
+        exp = self.get(exp_id)
+        if exp is None:
+            raise ValueError(f"Experiment '{exp_id}' not found")
+        if not exp.metadata.attempts:
+            raise ValueError(
+                f"Experiment '{exp_id}' has no attempts. "
+                "retry() can only append attempts to experiments that have been run."
+            )
+        if exp.metadata.locked or exp.metadata.status in _TERMINAL_STATUSES:
+            raise ValueError(
+                f"Experiment '{exp_id}' is finished. "
+                "retry() can only append attempts to running experiments."
+            )
+        return self.run(exp_id, command, data_path=data_path)
 
     def finish(
         self,
@@ -402,7 +665,7 @@ class ExMan:
             raise LockedExperimentError(
                 f"Experiment {exp_id} is already sealed (status: "
                 f"{exp.metadata.status}, finished_at: {exp.metadata.finished_at}). "
-                "Use 'kai-exman run --resume <id>' to start a new record."
+                "Use init() with parent_ids to create a child record."
             )
 
         if not exp.metadata.attempts:
@@ -519,19 +782,18 @@ class ExMan:
         data_path: str = "",
         mode: str = "auto",
     ) -> Tuple[Experiment, bool, int]:
-        """Resume an experiment with strict lifecycle constraints.
+        """Backward-compatible wrapper around init() / run() / retry().
+
+        .. deprecated::
+            Use :meth:`init`, :meth:`run`, or :meth:`retry` explicitly.
 
         Case A (Retry): The parent experiment is *running* (not locked) and
         the workspace matches the parent's Git commit exactly. A new attempt
         is appended to the same experiment.
 
         Case B (Inheritance): The parent experiment is *finished* (locked).
-        A new experiment is created with ``parent_id`` set and checkpoints are
+        A new experiment is created with ``parent_ids`` set and checkpoints are
         copied from the parent.
-
-        Aborted experiments cannot be resumed or inherited from.
-        Running experiments with a diverged workspace must be finished or
-        aborted before inheritance can occur.
 
         Args:
             exp_id: Full ID of the experiment to resume from.
@@ -546,10 +808,6 @@ class ExMan:
 
         Returns:
             Tuple of (experiment, is_new_experiment, attempt_number).
-
-        Raises:
-            ValueError: If the parent experiment is not found, was aborted,
-                or has a diverged workspace.
         """
         parent = self.get(exp_id)
         if parent is None:
@@ -619,38 +877,21 @@ class ExMan:
         # Case B: Inheritance (parent is locked/finished)
         child = self.init(
             description=description,
-            tags=tags if tags is not None else list(parent.metadata.tags),
-            config=config if config is not None else dict(parent.config),
+            tags=tags,
+            config=config,
             data_version=data_version,
             group=group or "default",
             data_path=data_path,
+            parent_ids=[parent.metadata.exp_id],
         )
-        child.metadata.parent_id = parent.metadata.exp_id
+        # init() creates a draft with empty attempts; resume() historically
+        # appended attempt 1 immediately for backward compatibility.
         child.metadata.attempts.append(
             Attempt(sequence=1, status="running", reason="run_1")
         )
+        child.metadata.status = "running"
         child.write_metadata()
         self._update_index(child, "add")
-
-        # Symlink checkpoints from parent (fallback to hard copy)
-        parent_ckpt = parent.root / "artifacts" / "checkpoints"
-        child_ckpt = child.root / "artifacts" / "checkpoints"
-        if parent_ckpt.exists():
-            for src in parent_ckpt.iterdir():
-                dest = child_ckpt / src.name
-                try:
-                    os.symlink(src.resolve(), dest)
-                except OSError:
-                    warnings.warn(
-                        f"Symlink failed for {src.name}, falling back to copy. "
-                        "Enable Developer Mode on Windows for symlink support.",
-                        stacklevel=2,
-                    )
-                    if src.is_dir():
-                        shutil.copytree(src, dest, dirs_exist_ok=True)
-                    else:
-                        shutil.copy2(src, dest)
-
         return child, True, 1
 
     def move(self, exp_id: str, new_group: str) -> Experiment:
@@ -884,7 +1125,7 @@ class ExMan:
         # enforced regardless of dry_run.
         children = [
             e for e in self.list()
-            if e.metadata.parent_id == exp_id
+            if exp_id in e.metadata.parent_ids
         ]
         if children:
             child_ids = ", ".join(
@@ -915,14 +1156,13 @@ class ExMan:
             shutil.move(str(exp.root), str(dest))
             self._update_index(exp, "remove")
 
-            # Cascade delete: check if parent is deletable and now childless
-            parent_id = exp.metadata.parent_id
-            if parent_id:
+            # Cascade delete: check if any parent is deletable and now childless
+            for parent_id in exp.metadata.parent_ids:
                 parent = self.get(parent_id)
                 if parent and parent.metadata.deletable:
                     remaining_children = [
                         e for e in self.list()
-                        if e.metadata.parent_id == parent_id
+                        if parent_id in e.metadata.parent_ids
                     ]
                     if not remaining_children:
                         parent_exp, parent_purged = self.remove(

@@ -19,7 +19,7 @@ def test_experiment_init(tmp_exman_path):
 
     assert exp.metadata.exp_id != ""
     assert exp.metadata.data_version == "md5:cafebabe"
-    assert exp.metadata.status == "running"
+    assert exp.metadata.status == "draft"
     assert exp.root.exists()
     assert (exp.root / "metadata.json").exists()
     assert (exp.root / "config.yaml").exists()

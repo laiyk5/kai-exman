@@ -9,7 +9,6 @@ from __future__ import annotations
 import getpass
 import io
 import os
-import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -351,6 +350,11 @@ def cli(
 @click.option("--config", "-c", help="Path to config YAML file")
 @click.option("--group", "-g", default="default", help="Group name (default: default)")
 @click.option("--data-path", help="Dataset path for automatic hash")
+@click.option(
+    "--inherit",
+    multiple=True,
+    help="Parent experiment ID to inherit from (can be used multiple times)",
+)
 @click.pass_context
 def init(
     ctx: click.Context,
@@ -359,11 +363,13 @@ def init(
     config: str | None,
     group: str,
     data_path: str | None,
+    inherit: tuple[str, ...],
 ) -> None:
-    """Initialize a new experiment.
+    """Initialize a new experiment (draft).
 
     Creates a directory structure, captures Git state, and optionally
-    loads a YAML configuration file.
+    loads a YAML configuration file. Use --inherit to create a child
+    experiment from one or more finished parents.
     """
     description = _require_text(
         description,
@@ -383,13 +389,19 @@ def init(
     tag_list = [t.strip() for t in tags.split(",")] if tags else []
     cfg_mgr: ConfigManager = ctx.obj["config"]
     exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
-    exp = exman.init(
-        description=description,
-        tags=tag_list,
-        config=cfg,
-        group=group,
-        data_path=data_path or "",
-    )
+
+    parent_ids = list(inherit) if inherit else None
+    try:
+        exp = exman.init(
+            description=description,
+            tags=tag_list or None,
+            config=cfg,
+            group=group,
+            data_path=data_path or "",
+            parent_ids=parent_ids,
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
     short_len = cfg_mgr.get("short_id_length", 8)
     short_id = exp.metadata.exp_id[:short_len]
@@ -402,6 +414,9 @@ def init(
         f"[bold]Git Hash:[/bold] {exp.metadata.git_hash or 'N/A'}",
         f"[bold]Status:[/bold] {exp.metadata.status}",
     ]
+    if exp.metadata.parent_ids:
+        parent_shorts = ", ".join(pid[:short_len] for pid in exp.metadata.parent_ids)
+        lines.append(f"[bold]Parents:[/bold] {parent_shorts}")
     if exp.metadata.git_dirty:
         lines.append(
             "[bold yellow]Warning:[/bold yellow] Working tree has uncommitted changes"
@@ -409,311 +424,140 @@ def init(
     _echo_lines(ctx, lines)
 
 
+def _resolve_run_args(
+    exman: ExMan, args: tuple[str, ...]
+) -> tuple[str, list[str]]:
+    """Resolve experiment ID and command from run/retry arguments.
+
+    If the first argument matches exactly one experiment prefix, it is
+    treated as the experiment ID and the rest form the command.
+    Otherwise the default experiment is used and all args form the command.
+
+    A leading '--' is stripped from the command if present.
+    """
+    if not args:
+        raise click.ClickException(
+            "No command to execute. Provide a command, e.g.:\n"
+            "  kai-exman run -- python train.py"
+        )
+
+    # If first arg is '--', skip it and use default exp
+    if args[0] == "--":
+        exp_id = _resolve_exp_id_or_default(exman, None)
+        command = list(args[1:])
+        if not command:
+            raise click.ClickException("No command to execute.")
+        return exp_id, command
+
+    first = args[0]
+    matches = [e for e in exman.list() if e.metadata.exp_id.startswith(first)]
+    if len(matches) == 1:
+        exp_id = matches[0].metadata.exp_id
+        command = list(args[1:])
+    else:
+        exp_id = _resolve_exp_id_or_default(exman, None)
+        command = list(args)
+
+    # Strip leading '--' if present
+    if command and command[0] == "--":
+        command = command[1:]
+
+    if not command:
+        raise click.ClickException("No command to execute.")
+    return exp_id, command
+
+
 @cli.command()
-@click.option("--retry", help="Append attempt to a running experiment")
-@click.option("--inherit", "inherit_id", help="Create child from a finished experiment")
-@click.option("--description", "-d", default="", help="Experiment description")
-@click.option("--tags", "-t", default="", help="Comma-separated tags")
-@click.option("--config", "-c", help="Path to config YAML file")
-@click.option("--group", "-g", help="Group for new experiment (Case B resume)")
+@click.argument("args", nargs=-1, required=True)
 @click.option("--data-path", help="Dataset path for automatic hash")
-@click.argument("command", nargs=-1, required=True)
 @click.pass_context
 def run(
     ctx: click.Context,
-    retry: str | None,
-    inherit_id: str | None,
-    description: str,
-    tags: str,
-    config: str | None,
-    group: str | None,
+    args: tuple[str, ...],
     data_path: str | None,
-    command: tuple[str, ...],
 ) -> None:
-    """Run a command within an experiment context.
+    """Execute a command on an existing experiment.
 
-    Creates a new experiment (or resumes an existing one) and executes the
-    provided command with KAI_EXMAN_* environment variables set.
+    Creates attempt 1 for a draft experiment, or appends an attempt for a
+    running experiment. Finished or aborted experiments cannot be run.
 
     Usage:
-        kai-exman run -- python train.py
-        kai-exman run --retry <exp_id> -- python train.py
-        kai-exman run --inherit <exp_id> -d "..." -- python train.py
+        kai-exman run -- python train.py              (uses default exp)
+        kai-exman run <exp_id> -- python train.py     (uses specific exp)
     """
-    if retry and inherit_id:
-        raise click.ClickException(
-            "--retry and --inherit are mutually exclusive."
-        )
-
-    cfg = None
-    if config and Path(config).exists():
-        with open(config, encoding="utf-8") as f:
-            cfg = yaml.safe_load(f)
-
-    tag_list = [t.strip() for t in tags.split(",")] if tags else []
     cfg_mgr: ConfigManager = ctx.obj["config"]
     exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
 
-    if not command:
-        raise click.ClickException(
-            "No command to execute. Provide a command after '--', e.g.:\n"
-            "  kai-exman run -- python train.py\n"
-            "  kai-exman run --retry <id> -- python train.py"
-        )
+    resolved_id, command = _resolve_run_args(exman, args)
 
-    resolved_id: str | None = None
-    resume_mode: str | None = None
+    short_len = cfg_mgr.get("short_id_length", 8)
+    short_id = resolved_id[:short_len]
 
-    if retry:
-        resolved_id = _resolve_exp_id(exman, retry)
-        resume_mode = "retry"
-        parent = exman.get(resolved_id)
-        if parent is None:
-            raise click.ClickException(
-                f"Experiment '{resolved_id}' not found."
-            )
-        if parent.metadata.status == "aborted" and parent.metadata.locked:
-            raise click.ClickException(
-                f"Experiment '{resolved_id}' was aborted and cannot be resumed."
-            )
-        # Case A: workspace must be clean
-        current_hash, current_dirty = exman._current_git_state()
-        is_clean = (
-            current_hash
-            and current_hash == parent.metadata.git_hash
-            and not current_dirty
-        )
-        if not is_clean:
-            raise click.ClickException(
-                "Workspace has diverged from the experiment's git state. "
-                "Finish or abort this experiment first, then inherit from "
-                "the finished experiment to create a child record."
-            )
-        description = ""
+    _echo_lines(ctx, [f"[bold green]Running experiment {short_id}.[/bold green]"])
 
-    elif inherit_id:
-        resolved_id = _resolve_exp_id(exman, inherit_id)
-        resume_mode = "inherit"
-        parent = exman.get(resolved_id)
-        if parent is None:
-            raise click.ClickException(
-                f"Experiment '{resolved_id}' not found."
-            )
-        if parent.metadata.status == "aborted":
-            raise click.ClickException(
-                f"Experiment '{resolved_id}' was aborted and cannot be inherited."
-            )
-        # Case B: description required
-        description = _require_text(
-            description,
-            prompt="Describe what is being changed or tested in this fork...",
-            empty_msg=(
-                "Description is required for inheritance."
-                " Use --description or run interactively."
-            ),
-            template=_FORK_TEMPLATE,
+    try:
+        _exp, returncode = exman.run(
+            resolved_id, command, data_path=data_path or ""
         )
+    except (ValueError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
 
-    if resume_mode:
-        assert resolved_id is not None
-        try:
-            exp, is_new, _attempt_num = exman.resume(
-                exp_id=resolved_id,
-                description=description,
-                tags=tag_list or None,
-                config=cfg,
-                group=group,
-                data_path=data_path or "",
-                mode=resume_mode,
-            )
-        except (LockedExperimentError, ValueError) as exc:
-            raise click.ClickException(str(exc)) from exc
-    else:
-        description = _require_text(
-            description,
-            prompt="Describe the intent of this experiment...",
-            empty_msg=(
-                "Experiment description is required."
-                " Use --description or run interactively."
-            ),
-            template=_INTENT_TEMPLATE,
-        )
-        if group is not None:
-            _validate_group(group)
-        exp = exman.init(
-            description=description,
-            tags=tag_list,
-            config=cfg,
-            group=group or "default",
-            data_path=data_path or "",
-        )
-        is_new = True
-
-    _execute_in_context(
+    status_color = "green" if returncode == 0 else "red"
+    _echo_lines(
         ctx,
-        exman,
-        exp,
-        command,
-        is_new,
-        resume=resolved_id,
-        resolved_id=resolved_id,
-        cfg_mgr=cfg_mgr,
+        [
+            f"[bold {status_color}]Experiment {short_id} exited with "
+            f"code {returncode}.[/bold {status_color}]"
+        ],
     )
 
-
-def _execute_in_context(
-    ctx: click.Context,
-    exman: ExMan,
-    exp: Experiment,
-    command: tuple[str, ...],
-    is_new: bool,
-    resume: str | None,
-    resolved_id: str | None,
-    cfg_mgr: ConfigManager,
-) -> None:
-    """Execute a command inside an experiment context.
-
-    Shared helper used by ``run`` and ``retry``.
-    """
-    short_len = cfg_mgr.get("short_id_length", 8)
-    short_id = exp.metadata.exp_id[:short_len]
-
-    # Ensure an attempt record exists before execution.
-    if not exp.metadata.attempts:
-        from kaiexman.models import Attempt
-
-        exp.metadata.attempts.append(
-            Attempt(
-                sequence=1, status="running", reason="run_1", command=list(command)
-            )
-        )
-        exp.write_metadata()
-        attempt_num = 1
-    else:
-        last_attempt = exp.metadata.attempts[-1]
-        if not last_attempt.command:
-            last_attempt.command = list(command)
-            exp.write_metadata()
-        attempt_num = last_attempt.sequence
-
-    # Set resume environment variables
-    env = os.environ.copy()
-    env["KAI_EXMAN_RESUME"] = "1"
-    env["KAI_EXMAN_ATTEMPT_COUNT"] = str(attempt_num)
-    if resume and not is_new:
-        env["KAI_EXMAN_PARENT_PATH"] = str(exp.root)
-    elif resume and is_new and resolved_id:
-        parent = exman.get(resolved_id)
-        if parent is not None:
-            env["KAI_EXMAN_PARENT_PATH"] = str(parent.root)
-
-    if is_new and resume:
-        parent_short = (
-            resolved_id[:short_len] if resolved_id else resume[:short_len]
-        )
-        msg = (
-            f"[bold green]Creating new experiment {short_id} "
-            f"inherited from {parent_short}.[/bold green]"
-        )
-    elif resume:
-        msg = (
-            f"[bold blue]Resuming experiment {short_id} "
-            f"(attempt {attempt_num}).[/bold blue]"
-        )
-    else:
-        msg = f"[bold green]Running experiment {short_id}.[/bold green]"
-    _echo_lines(ctx, [msg])
-
-    # Execute the command
-    try:
-        result = subprocess.run(command, env=env)
-    except FileNotFoundError as exc:
-        raise click.ClickException(
-            f"Cannot execute command: {exc}."
-            f" If you meant to resume an experiment,"
-            f" use --resume <exp_id>."
-        ) from exc
-
-    # Update the last attempt with the outcome.
-    last_attempt = exp.metadata.attempts[-1]
-    last_attempt.end_time = datetime.now().isoformat()
-    last_attempt.exit_code = result.returncode
-    if result.returncode == 0:
-        last_attempt.status = "success"
-    elif result.returncode is not None and (
-        result.returncode < 0 or result.returncode >= 128
-    ):
-        last_attempt.status = "aborted"
-    else:
-        last_attempt.status = "failed"
-    exp.metadata.status = last_attempt.status
-    exp.write_metadata()
-
-    sys.exit(result.returncode)
+    sys.exit(returncode)
 
 
 @cli.command()
-@click.argument("exp_id", required=False)
-@click.option("--tags", "-t", default="", help="Comma-separated tags")
-@click.option("--config", "-c", help="Path to config YAML file")
+@click.argument("args", nargs=-1, required=True)
 @click.option("--data-path", help="Dataset path for automatic hash")
-@click.argument("command", nargs=-1, required=True)
 @click.pass_context
 def retry(
     ctx: click.Context,
-    exp_id: str | None,
-    tags: str,
-    config: str | None,
+    args: tuple[str, ...],
     data_path: str | None,
-    command: tuple[str, ...],
 ) -> None:
-    """Retry an experiment by appending a new attempt.
+    """Retry a running experiment by appending a new attempt.
 
-    Only works when the workspace matches the experiment's Git commit
-    exactly and the experiment is still running (not finished or aborted).
+    Equivalent to ``run`` but raises if the experiment is not running.
 
     Usage:
         kai-exman retry <exp_id> -- python train.py
         kai-exman retry -- python train.py   (uses default experiment)
     """
-    cfg = None
-    if config and Path(config).exists():
-        with open(config, encoding="utf-8") as f:
-            cfg = yaml.safe_load(f)
-
-    tag_list = [t.strip() for t in tags.split(",")] if tags else []
     cfg_mgr: ConfigManager = ctx.obj["config"]
     exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
 
-    if not command:
-        raise click.ClickException(
-            "No command to execute. Provide a command after '--', e.g.:\n"
-            "  kai-exman retry <exp_id> -- python train.py"
-        )
+    resolved_id, command = _resolve_run_args(exman, args)
 
-    resolved_id = _resolve_exp_id_or_default(exman, exp_id)
+    short_len = cfg_mgr.get("short_id_length", 8)
+    short_id = resolved_id[:short_len]
+
+    _echo_lines(ctx, [f"[bold blue]Retrying experiment {short_id}.[/bold blue]"])
 
     try:
-        exp, is_new, _attempt_num = exman.resume(
-            exp_id=resolved_id,
-            tags=tag_list or None,
-            config=cfg,
-            data_path=data_path or "",
-            mode="retry",
+        _exp, returncode = exman.retry(
+            resolved_id, command, data_path=data_path or ""
         )
-    except (LockedExperimentError, ValueError) as exc:
+    except (ValueError, RuntimeError) as exc:
         raise click.ClickException(str(exc)) from exc
 
-    _execute_in_context(
+    status_color = "green" if returncode == 0 else "red"
+    _echo_lines(
         ctx,
-        exman,
-        exp,
-        command,
-        is_new,
-        resume=resolved_id,
-        resolved_id=resolved_id,
-        cfg_mgr=cfg_mgr,
+        [
+            f"[bold {status_color}]Experiment {short_id} exited with "
+            f"code {returncode}.[/bold {status_color}]"
+        ],
     )
+
+    sys.exit(returncode)
 
 
 @cli.command(name="list")
@@ -992,11 +836,12 @@ def _build_lineage(
     children_map: dict[str, list[Experiment]] = {}
 
     for exp in experiments:
-        parent_id = exp.metadata.parent_id
-        if parent_id and parent_id in exp_map:
-            children_map.setdefault(parent_id, []).append(exp)
-        else:
+        has_parent_in_set = any(pid in exp_map for pid in exp.metadata.parent_ids)
+        if not has_parent_in_set:
             roots.append(exp)
+        for pid in exp.metadata.parent_ids:
+            if pid in exp_map:
+                children_map.setdefault(pid, []).append(exp)
 
     return roots, children_map
 
@@ -1037,9 +882,10 @@ def _build_log_lines(
             f" [[{status_color}]{exp.metadata.status}[/{status_color}]]"
         )
 
-        if exp.metadata.parent_id:
-            parent_short = exp.metadata.parent_id[:short_len]
-            lines.append(f"[dim]Parent: {parent_short}[/dim]")
+        if exp.metadata.parent_ids:
+            for pid in exp.metadata.parent_ids:
+                parent_short = pid[:short_len]
+                lines.append(f"[dim]Parent: {parent_short}[/dim]")
 
         lines.append(f"Author: {getpass.getuser()}")
         lines.append(f"Date:   {dt}  |  Group: {exp.metadata.group}")
@@ -1149,12 +995,14 @@ def _build_tree_lines(
         List of markup strings representing the tree view.
     """
     lines: list[str] = []
+    rendered: set[str] = set()
 
     def _render_node(
         exp: Experiment,
         prefix: str,
         is_last: bool,
         is_root: bool,
+        path_ids: set[str],
     ) -> None:
         status_color = _STATUS_COLORS.get(exp.metadata.status, "white")
         status_label = exp.metadata.status.upper()
@@ -1171,6 +1019,10 @@ def _build_tree_lines(
             status_label = "DRAFT"
             status_color = "dim"
 
+        multi_marker = ""
+        if not is_root and len(exp.metadata.parent_ids) > 1:
+            multi_marker = " [dim][multi-parent][/dim]"
+
         if is_root:
             connector = "○" if is_draft else "*"
         else:
@@ -1178,18 +1030,31 @@ def _build_tree_lines(
 
         line = (
             f"{prefix}{connector} [yellow]{disp_id}[/yellow]  "
-            f"[{status_color}]{status_label}[/{status_color}]  {desc}"
+            f"[{status_color}]{status_label}[/{status_color}]  {desc}{multi_marker}"
         )
         lines.append(line)
+
+        # Avoid cycles
+        if exp.metadata.exp_id in path_ids:
+            return
+
+        # Only expand children on the first visit to avoid duplicated subtrees
+        should_expand = exp.metadata.exp_id not in rendered
+        rendered.add(exp.metadata.exp_id)
+        if not should_expand:
+            return
 
         children = children_map.get(exp.metadata.exp_id, [])
         for i, child in enumerate(children):
             child_is_last = i == len(children) - 1
             child_prefix = prefix + ("    " if is_last else "|   ")
-            _render_node(child, child_prefix, child_is_last, is_root=False)
+            _render_node(
+                child, child_prefix, child_is_last, is_root=False,
+                path_ids=path_ids | {exp.metadata.exp_id},
+            )
 
     for root in roots:
-        _render_node(root, "", is_last=True, is_root=True)
+        _render_node(root, "", is_last=True, is_root=True, path_ids=set())
         lines.append("")
 
     return lines
@@ -1339,9 +1204,10 @@ def show(ctx: click.Context, exp_id: str | None, full_id: bool) -> None:
         f"[bold cyan]Git Hash:[/bold cyan] {exp.metadata.git_hash or 'N/A'}",
         f"[bold cyan]Git Dirty:[/bold cyan] {exp.metadata.git_dirty}",
     ]
-    if exp.metadata.parent_id:
-        parent_disp = _display_id(exp.metadata.parent_id, full_id, short_len)
-        lines.append(f"[bold cyan]Parent:[/bold cyan] {parent_disp}")
+    if exp.metadata.parent_ids:
+        for pid in exp.metadata.parent_ids:
+            parent_disp = _display_id(pid, full_id, short_len)
+            lines.append(f"[bold cyan]Parent:[/bold cyan] {parent_disp}")
     lines.append(f"[bold cyan]Path:[/bold cyan] {exp.root}")
     lines.append("")
 
