@@ -223,45 +223,6 @@ def test_init_inherit_on_aborted_fails(tmp_exman_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# retry command (standalone)
-# ---------------------------------------------------------------------------
-
-
-def test_retry_command_appends_attempt(tmp_exman_path, monkeypatch):
-    """Standalone retry command appends an attempt to a running experiment."""
-    exman = ExMan(root=tmp_exman_path)
-    parent = exman.init(description="retry target")
-
-    from kaiexman.models import Attempt
-
-    parent.metadata.attempts.append(
-        Attempt(sequence=1, status="running", exit_code=0)
-    )
-    parent.write_metadata()
-
-    monkeypatch.setattr(
-        ExMan, "_current_git_state", lambda _self: (parent.metadata.git_hash, False)
-    )
-
-    runner = CliRunner()
-    result = runner.invoke(
-        cli,
-        [
-            "--path",
-            tmp_exman_path,
-            "retry",
-            parent.metadata.exp_id,
-            "--",
-            "echo",
-            "hello",
-        ],
-    )
-    assert result.exit_code == 0
-    reloaded = exman.get(parent.metadata.exp_id)
-    assert len(reloaded.metadata.attempts) == 2
-
-
-# ---------------------------------------------------------------------------
 # use command
 # ---------------------------------------------------------------------------
 

@@ -427,7 +427,7 @@ def init(
 def _resolve_run_args(
     exman: ExMan, args: tuple[str, ...]
 ) -> tuple[str, list[str]]:
-    """Resolve experiment ID and command from run/retry arguments.
+    """Resolve experiment ID and command from run arguments.
 
     If the first argument matches exactly one experiment prefix, it is
     treated as the experiment ID and the rest form the command.
@@ -497,52 +497,6 @@ def run(
 
     try:
         _exp, returncode = exman.run(
-            resolved_id, command, data_path=data_path or ""
-        )
-    except (ValueError, RuntimeError) as exc:
-        raise click.ClickException(str(exc)) from exc
-
-    status_color = "green" if returncode == 0 else "red"
-    _echo_lines(
-        ctx,
-        [
-            f"[bold {status_color}]Experiment {short_id} exited with "
-            f"code {returncode}.[/bold {status_color}]"
-        ],
-    )
-
-    sys.exit(returncode)
-
-
-@cli.command()
-@click.argument("args", nargs=-1, required=True)
-@click.option("--data-path", help="Dataset path for automatic hash")
-@click.pass_context
-def retry(
-    ctx: click.Context,
-    args: tuple[str, ...],
-    data_path: str | None,
-) -> None:
-    """Retry a running experiment by appending a new attempt.
-
-    Equivalent to ``run`` but raises if the experiment is not running.
-
-    Usage:
-        kai-exman retry <exp_id> -- python train.py
-        kai-exman retry -- python train.py   (uses default experiment)
-    """
-    cfg_mgr: ConfigManager = ctx.obj["config"]
-    exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
-
-    resolved_id, command = _resolve_run_args(exman, args)
-
-    short_len = cfg_mgr.get("short_id_length", 8)
-    short_id = resolved_id[:short_len]
-
-    _echo_lines(ctx, [f"[bold blue]Retrying experiment {short_id}.[/bold blue]"])
-
-    try:
-        _exp, returncode = exman.retry(
             resolved_id, command, data_path=data_path or ""
         )
     except (ValueError, RuntimeError) as exc:

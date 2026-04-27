@@ -159,8 +159,8 @@ def test_run_records_command_in_attempt(tmp_exman_path, monkeypatch):
     assert reloaded.metadata.attempts[0].command == ["echo", "hello world"]
 
 
-def test_retry_records_command_in_attempt(tmp_exman_path, monkeypatch):
-    """Retry should record the new command in the appended attempt."""
+def test_run_records_command_in_second_attempt(tmp_exman_path, monkeypatch):
+    """run on a running experiment records the new command in the appended attempt."""
     monkeypatch.setattr(
         Experiment, "_git_info", lambda *args, **kwargs: ("abc123", False)
     )
@@ -180,7 +180,7 @@ def test_retry_records_command_in_attempt(tmp_exman_path, monkeypatch):
         [
             "--path",
             tmp_exman_path,
-            "retry",
+            "run",
             exp.metadata.exp_id,
             "--",
             "echo",

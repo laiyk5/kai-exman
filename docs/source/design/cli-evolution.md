@@ -10,37 +10,34 @@ The current `--resume` flag auto-detects Case A (retry) vs. Case B (inherit). Th
 
 Replace `--resume` with two mutually exclusive flags:
 
-| Flag | Semantics | Required Parent State |
-|------|-----------|----------------------|
-| `--retry <id>` | Explicit Case A: append attempt to same experiment. | `running` |
-| `--inherit <pid>` | Explicit Case B: create child from finished parent. | `finished` |
-
-A standalone `retry <id>` command remains as a shorthand for `run --retry`.
+| Flag              | Semantics                                    | Required Parent State |
+|-------------------|----------------------------------------------|-----------------------|
+| `--inherit <pid>` | Explicit: create child from finished parent. | `finished`            |
 
 Auto-detection is removed. The user must state their intent. This prevents surprises where a dirty workspace silently creates a new experiment chain when the user meant to retry.
 
-### Manager API
+### Python API
 
 ```python
-def resume(
-    self,
-    exp_id: str,
-    ...,
-    mode: str = "auto",  # "auto" | "retry" | "inherit"
-) -> Tuple[Experiment, bool, int]:
+# Create a draft (root or child)
+exp = exman.init(description="...", parent_ids=["a1b2c3d4"])
+
+# Execute on existing experiment
+exp, code = exman.run(exp.metadata.exp_id, ["python", "train.py"])
+
+# Finish / abort
+exman.finish(exp.metadata.exp_id, summary="...")
 ```
 
-- `mode="retry"`: Forces Case A. Raises if parent is not `running`.
-- `mode="inherit"`: Forces Case B. Raises if parent is not `finished` or is `aborted`.
-- `mode="auto"`: Preserved for backward compatibility of the Python API.
+`ExMan.resume()` is preserved for backward compatibility but delegates to `init()` + `run()`.
 
 ### Error Messages
 
 | User Action | Error |
 |-------------|-------|
-| `run --retry <finished_id>` | "Experiment is finished. Use `run --inherit` to create a child." |
-| `run --inherit <running_id>` | "Experiment is still running. Use `run --retry` to append an attempt." |
-| `run --inherit <aborted_id>` | "Aborted experiments cannot be inherited." |
+| `run <finished_id> -- cmd` | "Experiment is finished. Use `init --inherit` to create a child." |
+| `init --inherit <running_id>` | "Experiment is still running. Run `init` after finishing or aborting." |
+| `init --inherit <aborted_id>` | "Aborted experiments cannot be inherited." |
 
 ---
 
@@ -58,7 +55,7 @@ Introduce a **default experiment** concept, persisted per experiments root.
 kai-exman use <exp_id>     # Set the default experiment for this root
 kai-exman finish -s "..."  # Operates on the default experiment
 kai-exman abort            # Operates on the default experiment
-kai-exman show             # Displays the default experiment
+kai-exman status           # Displays the default experiment
 kai-exman tag baseline     # Tags the default experiment
 kai-exman move --group eval # Moves the default experiment
 kai-exman rm               # Moves the default experiment to trash
@@ -92,17 +89,15 @@ The default experiment is scoped to the experiments root (`--path` / `EXMAN_PATH
 
 ### Commands Affected
 
-| Command | EXP_ID becomes optional? | Notes |
-|---------|--------------------------|-------|
-| `finish` | Yes | — |
-| `abort` | Yes | — |
-| `show` | Yes | — |
-| `tag` | Yes | Accepts `TAG_NAME` (default exp) or `EXP_ID TAG_NAME`. |
-| `move` | Yes | `--group` is always required. |
-| `rm` | Yes | `--clear-trash` still takes precedence. |
-| `run --retry` | No | Click option values cannot be omitted. |
-| `run --inherit` | No | Click option values cannot be omitted. |
-| `retry` | No | Positional `EXP_ID` is required before `nargs=-1` command. |
+| Command  | EXP_ID becomes optional? | Notes                                                   |
+|----------|--------------------------|---------------------------------------------------------|
+| `finish` | Yes                      | —                                                       |
+| `abort`  | Yes                      | —                                                       |
+| `status` | Yes                      | —                                                       |
+| `tag`    | Yes                      | Accepts `TAG_NAME` (default exp) or `EXP_ID TAG_NAME`.  |
+| `move`   | Yes                      | `--group` is always required.                           |
+| `rm`     | Yes                      | `--clear-trash` still takes precedence.                 |
+| `run`    | Yes                      | Uses default experiment if ID omitted.                  |
 
 ### New Command: `use`
 
@@ -121,9 +116,9 @@ Default experiment set to a1b2c3d4.
 
 ## 3. Acceptance Criteria
 
-1. `run --retry <id> -- cmd` succeeds only if the experiment is `running`.
-2. `run --inherit <pid> -d "..." -- cmd` succeeds only if the parent is `finished`.
-3. `retry <id> -- cmd` is equivalent to `run --retry <id> -- cmd`.
+1. `run <id> -- cmd` on a running experiment appends an attempt (git clean required).
+2. `run <id> -- cmd` on a finished experiment raises.
+3. `init --inherit <pid> -d "..."` succeeds only if the parent is `finished`.
 4. `kai-exman use <id>` writes `.current` and validates the ID.
 5. `kai-exman finish -s "..."` (no ID) uses the default experiment.
 6. Commands with an invalid/missing default raise a clear error.

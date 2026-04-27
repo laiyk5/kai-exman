@@ -91,25 +91,7 @@ kai-exman run [<exp_id>] -- python train.py
 
 ---
 
-## 4. Standalone `retry` Command
-
-Retained as a shorthand for `run` on a running experiment, for users who want to be explicit.
-
-```bash
-kai-exman retry <exp_id> -- python train.py
-```
-
-Equivalent to:
-
-```bash
-kai-exman run <exp_id> -- python train.py
-```
-
-`retry` requires the experiment to be `running` and the workspace to be clean. It is purely syntactic sugar.
-
----
-
-## 5. Updated Lifecycle
+## 4. Updated Lifecycle
 
 ```text
 
@@ -152,7 +134,7 @@ kai-exman run <exp_id> -- python train.py
 
 ---
 
-## 6. Data Model Changes
+## 5. Data Model Changes
 
 ### Metadata
 
@@ -182,7 +164,7 @@ On load, a scalar `parent_id` in existing `metadata.json` is transparently upgra
 
 ---
 
-## 7. Python-First API
+## 6. Python-First API
 
 The Python API is a **first-class citizen**. Everything the CLI can do, a Python script can do with the same explicit semantics.
 
@@ -219,19 +201,6 @@ def run(
         Tuple of (experiment, exit_code).
     """
 ```
-
-### `ExMan.retry()` — Explicit Retry
-
-```python
-def retry(
-    self,
-    exp_id: str,
-    command: list[str],
-    data_path: str = "",
-) -> tuple[Experiment, int]:
-```
-
-Equivalent to `run()` but raises if the experiment is not `running`.
 
 ### `ExMan.finish()` / `ExMan.abort()` — Seal
 
@@ -276,7 +245,7 @@ child.finish(summary="Best LR is 0.01.")
 
 ---
 
-## 8. Tree View (`list --tree`)
+## 7. Tree View (`list --tree`)
 
 With multi-parent inheritance, lineage is a **DAG**.
 
@@ -292,17 +261,16 @@ With multi-parent inheritance, lineage is a **DAG**.
 
 ---
 
-## 9. Commands Reference
+## 8. Commands Reference
 
 | Command | Purpose | Creates Experiment? |
 |---------|---------|---------------------|
 | `init -d "..."` | Create a fresh draft. | **Yes** (new root) |
 | `init -d "..." --inherit <id>` | Create a draft child from finished parent(s). | **Yes** (child) |
 | `run [<id>] -- cmd` | Execute command on existing experiment. | No |
-| `retry <id> -- cmd` | Shorthand for `run` on a running experiment. | No |
 | `finish [<id>] -s "..."` | Seal experiment. | No |
 | `abort [<id>]` | Abort experiment. | No |
-| `show [<id>]` | Display details. | No |
+| `status [<id>]` | Display details. | No |
 | `tag [<id>] <tag>` | Add/remove tag. | No |
 | `move [<id>] -g <group>` | Move to group. | No |
 | `rm [<id>]` | Move to trash. | No |
@@ -310,7 +278,7 @@ With multi-parent inheritance, lineage is a **DAG**.
 
 ---
 
-## 10. Acceptance Criteria
+## 9. Acceptance Criteria
 
 1. `init -d "..."` creates a draft with empty `attempts`.
 2. `init -d "..." --inherit a1b2c3d4 --inherit b2c3d4e5` creates a draft with two parents.
@@ -318,7 +286,6 @@ With multi-parent inheritance, lineage is a **DAG**.
 4. `run <running_id> -- cmd` (git clean) appends attempt N and executes.
 5. `run <finished_id> -- cmd` raises: "Experiment is finished. Use `init --inherit`."
 6. `run <aborted_id> -- cmd` raises: "Aborted experiments cannot be run."
-7. `retry <id> -- cmd` is equivalent to `run <id> -- cmd` on a running experiment.
-8. Old `parent_id` fields are transparently upgraded to `parent_ids` on load.
-9. `list --tree` renders multi-parent experiments under each parent.
-10. All changes pass `pytest`, `mypy --strict src/`, `ruff check`.
+7. Old `parent_id` fields are transparently upgraded to `parent_ids` on load.
+8. `list --tree` renders multi-parent experiments under each parent.
+9. All changes pass `pytest`, `mypy --strict src/`, `ruff check`.
