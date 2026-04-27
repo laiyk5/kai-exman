@@ -402,17 +402,42 @@ def run(
             resume = matches[0].metadata.exp_id
             command = command[1:]
 
+    if not command:
+        raise click.ClickException(
+            "No command to execute. Provide a command after '--', e.g.:\n"
+            "  kai-exman run -- python train.py\n"
+            "  kai-exman run --resume <id> -- python train.py"
+        )
+
     if resume:
         resolved_id = _resolve_exp_id(exman, resume)
-        description = _require_text(
-            description,
-            prompt="Describe what is being changed or tested in this fork...",
-            empty_msg=(
-                "Description is required for resume."
-                " Use --description or run interactively."
-            ),
-            template=_FORK_TEMPLATE,
+        parent = exman.get(resolved_id)
+        if parent is None:
+            raise click.ClickException(
+                f"Experiment '{resolved_id}' not found."
+            )
+
+        # Case A (retry) does not need a description.
+        # Case B (evolution/fork) requires one.
+        current_hash, current_dirty = exman._current_git_state()
+        is_case_a = (
+            current_hash
+            and current_hash == parent.metadata.git_hash
+            and not current_dirty
         )
+        if not is_case_a:
+            description = _require_text(
+                description,
+                prompt="Describe what is being changed or tested in this fork...",
+                empty_msg=(
+                    "Description is required for resume."
+                    " Use --description or run interactively."
+                ),
+                template=_FORK_TEMPLATE,
+            )
+        else:
+            description = ""
+
         try:
             exp, is_new, attempt_num = exman.resume(
                 exp_id=resolved_id,
