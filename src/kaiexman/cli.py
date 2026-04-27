@@ -13,7 +13,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, overload
 
 import click
 import yaml
@@ -211,6 +211,51 @@ def _resolve_exp_id(exman: ExMan, prefix: str) -> str:
     )
 
 
+@overload
+def _resolve_exp_id_or_default(
+    exman: ExMan, prefix: str | None, allow_missing: Literal[False] = False
+) -> str: ...
+
+
+@overload
+def _resolve_exp_id_or_default(
+    exman: ExMan, prefix: str | None, allow_missing: Literal[True] = True
+) -> str | None: ...
+
+
+def _resolve_exp_id_or_default(
+    exman: ExMan, prefix: str | None, allow_missing: bool = False
+) -> str | None:
+    """Resolve an EXP_ID or fall back to the default experiment.
+
+    Args:
+        exman: ExMan manager instance.
+        prefix: Partial or full experiment ID, or None to use default.
+        allow_missing: If True, return None when no default is set.
+
+    Returns:
+        The full experiment ID, or None if allow_missing is True and
+        no default is set.
+
+    Raises:
+        click.ClickException: If prefix is None and no default is set,
+            or if the default ID is invalid, or if resolution fails.
+    """
+    if prefix:
+        return _resolve_exp_id(exman, prefix)
+
+    default_id = exman.get_default_exp_id()
+    if default_id is not None:
+        return default_id
+
+    if allow_missing:
+        return None
+
+    raise click.ClickException(
+        "No default experiment set. Use 'kai-exman use <id>' or provide an EXP_ID."
+    )
+
+
 def _validate_tag(tag: str) -> None:
     """Validate a tag and raise ClickException on failure.
 
@@ -365,7 +410,8 @@ def init(
 
 
 @cli.command()
-@click.option("--resume", help="Resume from experiment ID")
+@click.option("--retry", help="Append attempt to a running experiment")
+@click.option("--inherit", "inherit_id", help="Create child from a finished experiment")
 @click.option("--description", "-d", default="", help="Experiment description")
 @click.option("--tags", "-t", default="", help="Comma-separated tags")
 @click.option("--config", "-c", help="Path to config YAML file")
@@ -375,7 +421,8 @@ def init(
 @click.pass_context
 def run(
     ctx: click.Context,
-    resume: str | None,
+    retry: str | None,
+    inherit_id: str | None,
     description: str,
     tags: str,
     config: str | None,
@@ -390,8 +437,14 @@ def run(
 
     Usage:
         kai-exman run -- python train.py
-        kai-exman run --resume <exp_id> -- python train.py
+        kai-exman run --retry <exp_id> -- python train.py
+        kai-exman run --inherit <exp_id> -d "..." -- python train.py
     """
+    if retry and inherit_id:
+        raise click.ClickException(
+            "--retry and --inherit are mutually exclusive."
+        )
+
     cfg = None
     if config and Path(config).exists():
         with open(config, encoding="utf-8") as f:
@@ -401,70 +454,68 @@ def run(
     cfg_mgr: ConfigManager = ctx.obj["config"]
     exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
 
-    # Auto-detect resume: if the first positional arg unambiguously matches
-    # an existing experiment ID, treat it as --resume.
-    if not resume and command:
-        first = command[0]
-        experiments = exman.list()
-        matches = [
-            e for e in experiments if e.metadata.exp_id.startswith(first)
-        ]
-        if len(matches) == 1:
-            resume = matches[0].metadata.exp_id
-            command = command[1:]
-
     if not command:
         raise click.ClickException(
             "No command to execute. Provide a command after '--', e.g.:\n"
             "  kai-exman run -- python train.py\n"
-            "  kai-exman run --resume <id> -- python train.py"
+            "  kai-exman run --retry <id> -- python train.py"
         )
 
     resolved_id: str | None = None
+    resume_mode: str | None = None
 
-    if resume:
-        resolved_id = _resolve_exp_id(exman, resume)
+    if retry:
+        resolved_id = _resolve_exp_id(exman, retry)
+        resume_mode = "retry"
         parent = exman.get(resolved_id)
         if parent is None:
             raise click.ClickException(
                 f"Experiment '{resolved_id}' not found."
             )
-
-        # Aborted experiments cannot be resumed.
         if parent.metadata.status == "aborted" and parent.metadata.locked:
             raise click.ClickException(
                 f"Experiment '{resolved_id}' was aborted and cannot be resumed."
             )
-
-        is_running = not parent.metadata.locked
-
-        if is_running:
-            # Case A: Retry — workspace must be clean.
-            current_hash, current_dirty = exman._current_git_state()
-            is_clean = (
-                current_hash
-                and current_hash == parent.metadata.git_hash
-                and not current_dirty
+        # Case A: workspace must be clean
+        current_hash, current_dirty = exman._current_git_state()
+        is_clean = (
+            current_hash
+            and current_hash == parent.metadata.git_hash
+            and not current_dirty
+        )
+        if not is_clean:
+            raise click.ClickException(
+                "Workspace has diverged from the experiment's git state. "
+                "Finish or abort this experiment first, then inherit from "
+                "the finished experiment to create a child record."
             )
-            if not is_clean:
-                raise click.ClickException(
-                    "Workspace has diverged from the experiment's git state. "
-                    "Finish or abort this experiment first, then resume from "
-                    "the finished experiment to create a child record."
-                )
-            description = ""
-        else:
-            # Case B: Inheritance from a finished experiment.
-            description = _require_text(
-                description,
-                prompt="Describe what is being changed or tested in this fork...",
-                empty_msg=(
-                    "Description is required for inheritance."
-                    " Use --description or run interactively."
-                ),
-                template=_FORK_TEMPLATE,
-            )
+        description = ""
 
+    elif inherit_id:
+        resolved_id = _resolve_exp_id(exman, inherit_id)
+        resume_mode = "inherit"
+        parent = exman.get(resolved_id)
+        if parent is None:
+            raise click.ClickException(
+                f"Experiment '{resolved_id}' not found."
+            )
+        if parent.metadata.status == "aborted":
+            raise click.ClickException(
+                f"Experiment '{resolved_id}' was aborted and cannot be inherited."
+            )
+        # Case B: description required
+        description = _require_text(
+            description,
+            prompt="Describe what is being changed or tested in this fork...",
+            empty_msg=(
+                "Description is required for inheritance."
+                " Use --description or run interactively."
+            ),
+            template=_FORK_TEMPLATE,
+        )
+
+    if resume_mode:
+        assert resolved_id is not None
         try:
             exp, is_new, _attempt_num = exman.resume(
                 exp_id=resolved_id,
@@ -473,6 +524,7 @@ def run(
                 config=cfg,
                 group=group,
                 data_path=data_path or "",
+                mode=resume_mode,
             )
         except (LockedExperimentError, ValueError) as exc:
             raise click.ClickException(str(exc)) from exc
@@ -601,7 +653,7 @@ def _execute_in_context(
 
 
 @cli.command()
-@click.argument("exp_id")
+@click.argument("exp_id", required=False)
 @click.option("--tags", "-t", default="", help="Comma-separated tags")
 @click.option("--config", "-c", help="Path to config YAML file")
 @click.option("--data-path", help="Dataset path for automatic hash")
@@ -609,7 +661,7 @@ def _execute_in_context(
 @click.pass_context
 def retry(
     ctx: click.Context,
-    exp_id: str,
+    exp_id: str | None,
     tags: str,
     config: str | None,
     data_path: str | None,
@@ -622,6 +674,7 @@ def retry(
 
     Usage:
         kai-exman retry <exp_id> -- python train.py
+        kai-exman retry -- python train.py   (uses default experiment)
     """
     cfg = None
     if config and Path(config).exists():
@@ -638,7 +691,7 @@ def retry(
             "  kai-exman retry <exp_id> -- python train.py"
         )
 
-    resolved_id = _resolve_exp_id(exman, exp_id)
+    resolved_id = _resolve_exp_id_or_default(exman, exp_id)
 
     try:
         exp, is_new, _attempt_num = exman.resume(
@@ -646,6 +699,7 @@ def retry(
             tags=tag_list or None,
             config=cfg,
             data_path=data_path or "",
+            mode="retry",
         )
     except (LockedExperimentError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -1142,7 +1196,7 @@ def _build_tree_lines(
 
 
 @cli.command()
-@click.argument("exp_id")
+@click.argument("exp_id", required=False)
 @click.option(
     "--summary",
     "-s",
@@ -1151,7 +1205,7 @@ def _build_tree_lines(
 )
 @click.option("--notes", "-n", default="", help="Additional post-mortem notes")
 @click.pass_context
-def finish(ctx: click.Context, exp_id: str, summary: str, notes: str) -> None:
+def finish(ctx: click.Context, exp_id: str | None, summary: str, notes: str) -> None:
     """Close an experiment and generate summary.md.
 
     Computes best metrics, determines final status from the last attempt's
@@ -1173,7 +1227,7 @@ def finish(ctx: click.Context, exp_id: str, summary: str, notes: str) -> None:
     )
     cfg_mgr: ConfigManager = ctx.obj["config"]
     exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
-    resolved_id = _resolve_exp_id(exman, exp_id)
+    resolved_id = _resolve_exp_id_or_default(exman, exp_id)
 
     try:
         exp = exman.finish(exp_id=resolved_id, notes=notes, summary=summary)
@@ -1199,10 +1253,10 @@ def finish(ctx: click.Context, exp_id: str, summary: str, notes: str) -> None:
 
 
 @cli.command()
-@click.argument("exp_id")
+@click.argument("exp_id", required=False)
 @click.option("--notes", "-n", default="", help="Additional post-mortem notes")
 @click.pass_context
-def abort(ctx: click.Context, exp_id: str, notes: str) -> None:
+def abort(ctx: click.Context, exp_id: str | None, notes: str) -> None:
     """Abort an experiment and generate summary.md.
 
     Marks the last attempt as aborted (no exit code) and seals the lab
@@ -1211,7 +1265,7 @@ def abort(ctx: click.Context, exp_id: str, notes: str) -> None:
     """
     cfg_mgr: ConfigManager = ctx.obj["config"]
     exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
-    resolved_id = _resolve_exp_id(exman, exp_id)
+    resolved_id = _resolve_exp_id_or_default(exman, exp_id)
 
     exp = exman.get(resolved_id)
     if exp is None:
@@ -1223,7 +1277,7 @@ def abort(ctx: click.Context, exp_id: str, notes: str) -> None:
     if exp.metadata.locked:
         raise click.ClickException(
             f"Experiment {resolved_id} is already sealed. "
-            "Use 'kai-exman run --resume <id>' to start a new record."
+            "Use 'kai-exman run --inherit <id>' to create a child record."
         )
 
     last = exp.metadata.attempts[-1]
@@ -1249,14 +1303,14 @@ def abort(ctx: click.Context, exp_id: str, notes: str) -> None:
 
 
 @cli.command()
-@click.argument("exp_id")
+@click.argument("exp_id", required=False)
 @click.option(
     "--full-id",
     is_flag=True,
     help="Display full 16-character experiment ID",
 )
 @click.pass_context
-def show(ctx: click.Context, exp_id: str, full_id: bool) -> None:
+def show(ctx: click.Context, exp_id: str | None, full_id: bool) -> None:
     """Display a detailed summary of a specific experiment.
 
     Shows metadata, configuration, and best metrics in a structured
@@ -1264,7 +1318,7 @@ def show(ctx: click.Context, exp_id: str, full_id: bool) -> None:
     """
     cfg_mgr: ConfigManager = ctx.obj["config"]
     exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
-    resolved_id = _resolve_exp_id(exman, exp_id)
+    resolved_id = _resolve_exp_id_or_default(exman, exp_id)
     exp = exman.get(resolved_id)
 
     if exp is None:
@@ -1332,21 +1386,35 @@ def show(ctx: click.Context, exp_id: str, full_id: bool) -> None:
 
 
 @cli.command(name="tag")
-@click.argument("exp_id")
-@click.argument("tag_name")
+@click.argument("args", nargs=-1)
 @click.option("--delete", "-d", is_flag=True, help="Remove the tag")
 @click.pass_context
 def tag_cmd(
     ctx: click.Context,
-    exp_id: str,
-    tag_name: str,
+    args: tuple[str, ...],
     delete: bool,
 ) -> None:
-    """Add or remove a tag on an experiment."""
+    """Add or remove a tag on an experiment.
+
+    Usage:
+        kai-exman tag <tag_name>
+        kai-exman tag <exp_id> <tag_name>
+    """
+    if len(args) == 1:
+        tag_name = args[0]
+        exp_id: str | None = None
+    elif len(args) == 2:
+        exp_id = args[0]
+        tag_name = args[1]
+    else:
+        raise click.ClickException(
+            "tag requires 1 or 2 arguments: [EXP_ID] TAG_NAME"
+        )
+
     _validate_tag(tag_name)
     cfg_mgr: ConfigManager = ctx.obj["config"]
     exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
-    resolved_id = _resolve_exp_id(exman, exp_id)
+    resolved_id = _resolve_exp_id_or_default(exman, exp_id)
     exp = exman.get(resolved_id)
 
     if exp is None:
@@ -1410,15 +1478,15 @@ def tags(ctx: click.Context, group: str | None) -> None:
 
 
 @cli.command()
-@click.argument("exp_id")
+@click.argument("exp_id", required=False)
 @click.option("--group", "-g", required=True, help="Target group name")
 @click.pass_context
-def move(ctx: click.Context, exp_id: str, group: str) -> None:
+def move(ctx: click.Context, exp_id: str | None, group: str) -> None:
     """Move an experiment to a different group."""
     _validate_group(group)
     cfg_mgr: ConfigManager = ctx.obj["config"]
     exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
-    resolved_id = _resolve_exp_id(exman, exp_id)
+    resolved_id = _resolve_exp_id_or_default(exman, exp_id)
 
     try:
         exp = exman.move(resolved_id, group)
@@ -1433,6 +1501,28 @@ def move(ctx: click.Context, exp_id: str, group: str) -> None:
             f"[bold green]Experiment {short_id} moved to group "
             f"'{exp.metadata.group}'.[/bold green]"
         ],
+    )
+
+
+@cli.command()
+@click.argument("exp_id")
+@click.pass_context
+def use(ctx: click.Context, exp_id: str) -> None:
+    """Set the default experiment for the current root."""
+    cfg_mgr: ConfigManager = ctx.obj["config"]
+    exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
+    resolved_id = _resolve_exp_id(exman, exp_id)
+
+    exp = exman.get(resolved_id)
+    if exp is None:
+        raise click.ClickException(f"Experiment '{resolved_id}' not found.")
+
+    exman.set_default_exp_id(resolved_id)
+    short_len = cfg_mgr.get("short_id_length", 8)
+    short_id = resolved_id[:short_len]
+    _echo_lines(
+        ctx,
+        [f"[bold green]Default experiment set to {short_id}.[/bold green]"],
     )
 
 
