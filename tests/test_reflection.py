@@ -334,6 +334,47 @@ def test_require_text_raises_in_non_interactive_mode():
         _require_text("", "prompt", "error msg")
 
 
+def test_require_text_strips_comments_and_returns_cleaned_text(monkeypatch):
+    from kaiexman.cli import _require_text
+
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr(
+        "click.edit",
+        lambda text: "# This is a prompt\n\nActual content\n# Another comment",
+    )
+
+    result = _require_text("", "prompt", "error msg")
+    assert result == "Actual content"
+
+
+def test_require_text_prefills_template(monkeypatch):
+    from kaiexman.cli import _CONCLUSION_TEMPLATE, _require_text
+
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+
+    captured = {}
+
+    def fake_edit(text):
+        captured["text"] = text
+        return "# prompt\n\nUser filled this in."
+
+    monkeypatch.setattr("click.edit", fake_edit)
+
+    _require_text("", "prompt", "error", template=_CONCLUSION_TEMPLATE)
+    assert "What worked:" in captured["text"]
+    assert "Next steps:" in captured["text"]
+
+
+def test_require_text_empty_after_comment_stripping_raises(monkeypatch):
+    from kaiexman.cli import _require_text
+
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("click.edit", lambda text: "# only comments\n  # indented")
+
+    with pytest.raises(click.ClickException, match="error msg"):
+        _require_text("", "prompt", "error msg")
+
+
 # ---------------------------------------------------------------------------
 # show command displays summary
 # ---------------------------------------------------------------------------
