@@ -24,9 +24,7 @@ def test_run_on_running_appends_attempt(tmp_exman_path, monkeypatch):
 
     from kaiexman.models import Attempt
 
-    parent.metadata.attempts.append(
-        Attempt(sequence=1, status="running", exit_code=0)
-    )
+    parent.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
     parent.write_metadata()
 
     monkeypatch.setattr(
@@ -58,9 +56,7 @@ def test_run_on_finished_fails(tmp_exman_path, monkeypatch):
 
     from kaiexman.models import Attempt
 
-    parent.metadata.attempts.append(
-        Attempt(sequence=1, status="running", exit_code=0)
-    )
+    parent.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
     parent.write_metadata()
     exman.finish(parent.metadata.exp_id, summary="Done.")
 
@@ -130,9 +126,7 @@ def test_init_inherit_on_finished_succeeds(tmp_exman_path, monkeypatch):
 
     from kaiexman.models import Attempt
 
-    parent.metadata.attempts.append(
-        Attempt(sequence=1, status="running", exit_code=0)
-    )
+    parent.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
     parent.write_metadata()
     exman.finish(parent.metadata.exp_id, summary="Done.")
 
@@ -167,9 +161,7 @@ def test_init_inherit_on_running_fails(tmp_exman_path, monkeypatch):
 
     from kaiexman.models import Attempt
 
-    parent.metadata.attempts.append(
-        Attempt(sequence=1, status="running", exit_code=0)
-    )
+    parent.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
     parent.write_metadata()
 
     runner = CliRunner()
@@ -328,9 +320,7 @@ def test_tag_uses_default_experiment(tmp_exman_path):
     exman.set_default_exp_id(exp.metadata.exp_id)
 
     runner = CliRunner()
-    result = runner.invoke(
-        cli, ["--path", tmp_exman_path, "tag", "baseline"]
-    )
+    result = runner.invoke(cli, ["--path", tmp_exman_path, "tag", "baseline"])
     assert result.exit_code == 0
     reloaded = exman.get(exp.metadata.exp_id)
     assert "baseline" in reloaded.metadata.tags

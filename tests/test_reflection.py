@@ -72,6 +72,7 @@ def test_init_inherit_cli_rejects_missing_description(tmp_exman_path):
     parent = exman.init(description="parent")
 
     from kaiexman.models import Attempt
+
     parent.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
     parent.write_metadata()
     exman.finish(parent.metadata.exp_id, summary="Done.")
@@ -96,6 +97,7 @@ def test_init_inherit_cli_fork_does_not_inherit_description(tmp_exman_path):
     parent = exman.init(description="parent desc", tags=["baseline"])
 
     from kaiexman.models import Attempt
+
     parent.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
     parent.write_metadata()
     exman.finish(parent.metadata.exp_id, summary="Done.")
@@ -135,9 +137,7 @@ def test_finish_cli_rejects_missing_summary(tmp_exman_path):
     exp = exman.init(description="finish test")
     from kaiexman.models import Attempt
 
-    exp.metadata.attempts.append(
-        Attempt(sequence=1, status="running", exit_code=0)
-    )
+    exp.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
     exp.write_metadata()
 
     runner = CliRunner()
@@ -154,9 +154,7 @@ def test_finish_cli_saves_summary_to_metadata(tmp_exman_path):
     exp = exman.init(description="finish test")
     from kaiexman.models import Attempt
 
-    exp.metadata.attempts.append(
-        Attempt(sequence=1, status="running", exit_code=0)
-    )
+    exp.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
     exp.write_metadata()
 
     runner = CliRunner()
@@ -246,9 +244,7 @@ def test_list_log_shows_conclusion_for_finished(tmp_exman_path):
     exp = exman.init(description="Training baseline model")
     from kaiexman.models import Attempt
 
-    exp.metadata.attempts.append(
-        Attempt(sequence=1, status="running", exit_code=0)
-    )
+    exp.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
     exp.write_metadata()
     exman.finish(exp.metadata.exp_id, summary="Converged to 95% accuracy.")
 
@@ -264,9 +260,7 @@ def test_list_oneline_shows_description(tmp_exman_path):
     exman.init(description="Quick eval run")
 
     runner = CliRunner()
-    result = runner.invoke(
-        cli, ["--path", tmp_exman_path, "list", "--oneline"]
-    )
+    result = runner.invoke(cli, ["--path", tmp_exman_path, "list", "--oneline"])
     assert result.exit_code == 0
     assert "Quick eval run" in result.output
 
@@ -276,19 +270,16 @@ def test_list_tree_truncates_long_description(tmp_exman_path, monkeypatch):
     parent = exman.init(description="A" * 50)
 
     from kaiexman.models import Attempt
+
     parent.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
     parent.write_metadata()
     exman.finish(parent.metadata.exp_id, summary="Done.")
 
-    monkeypatch.setattr(
-        exman, "_current_git_state", lambda: ("different_hash", True)
-    )
+    monkeypatch.setattr(exman, "_current_git_state", lambda: ("different_hash", True))
     exman.resume(parent.metadata.exp_id, description="B" * 50)
 
     runner = CliRunner()
-    result = runner.invoke(
-        cli, ["--path", tmp_exman_path, "list", "--tree"]
-    )
+    result = runner.invoke(cli, ["--path", tmp_exman_path, "list", "--tree"])
     assert result.exit_code == 0
     # Truncated to 27 chars + "..."
     assert "A" * 27 + "..." in result.output
@@ -364,9 +355,7 @@ def test_show_displays_summary(tmp_exman_path):
     exp = exman.init(description="show test")
     from kaiexman.models import Attempt
 
-    exp.metadata.attempts.append(
-        Attempt(sequence=1, status="running", exit_code=0)
-    )
+    exp.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
     exp.write_metadata()
     exman.finish(exp.metadata.exp_id, summary="All good.")
 

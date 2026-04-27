@@ -254,12 +254,8 @@ def test_index_updated_on_remove(tmp_exman_path):
 
 def test_suggest_groups_based_on_config_similarity(tmp_exman_path):
     exman = ExMan(root=tmp_exman_path)
-    exman.init(
-        description="train1", group="train", config={"lr": 0.01, "epochs": 100}
-    )
-    exman.init(
-        description="train2", group="train", config={"lr": 0.02, "epochs": 200}
-    )
+    exman.init(description="train1", group="train", config={"lr": 0.01, "epochs": 100})
+    exman.init(description="train2", group="train", config={"lr": 0.02, "epochs": 200})
     exman.init(
         description="orphan", group="default", config={"lr": 0.01, "epochs": 100}
     )
@@ -314,19 +310,14 @@ def test_resume_case_a_ignores_group_parameter(tmp_exman_path, monkeypatch):
 
     # Case A requires the parent to have at least one attempt
     from kaiexman.models import Attempt
-    parent.metadata.attempts.append(
-        Attempt(sequence=1, status="running")
-    )
+
+    parent.metadata.attempts.append(Attempt(sequence=1, status="running"))
     parent.write_metadata()
 
-    monkeypatch.setattr(
-        exman, "_current_git_state", lambda: (parent_hash, False)
-    )
+    monkeypatch.setattr(exman, "_current_git_state", lambda: (parent_hash, False))
 
     # Case A: group parameter should be ignored
-    exp, is_new, attempt_num = exman.resume(
-        parent.metadata.exp_id, group="eval"
-    )
+    exp, is_new, attempt_num = exman.resume(parent.metadata.exp_id, group="eval")
     assert is_new is False
     assert exp.metadata.group == "train"
     assert exp.root.parent.name == "train"
@@ -337,13 +328,12 @@ def test_resume_case_b_honors_group_parameter(tmp_exman_path, monkeypatch):
     parent = exman.init(description="parent", group="train")
 
     from kaiexman.models import Attempt
+
     parent.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
     parent.write_metadata()
     exman.finish(parent.metadata.exp_id, summary="Done.")
 
-    monkeypatch.setattr(
-        exman, "_current_git_state", lambda: ("different_hash", True)
-    )
+    monkeypatch.setattr(exman, "_current_git_state", lambda: ("different_hash", True))
 
     child, is_new, attempt_num = exman.resume(
         parent.metadata.exp_id, group="eval", description="child"
@@ -381,15 +371,12 @@ def test_resume_terminal_success_creates_child_case_b(tmp_exman_path, monkeypatc
 
     # Create an attempt and finish the experiment (terminal state)
     from kaiexman.models import Attempt
-    parent.metadata.attempts.append(
-        Attempt(sequence=1, status="running", exit_code=0)
-    )
+
+    parent.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
     parent.write_metadata()
     exman.finish(parent.metadata.exp_id)
 
-    monkeypatch.setattr(
-        exman, "_current_git_state", lambda: (parent_hash, False)
-    )
+    monkeypatch.setattr(exman, "_current_git_state", lambda: (parent_hash, False))
 
     child, is_new, attempt_num = exman.resume(
         parent.metadata.exp_id, description="child"
@@ -406,15 +393,12 @@ def test_resume_terminal_failed_creates_child_case_b(tmp_exman_path, monkeypatch
 
     # Create an attempt and finish with failed status (terminal)
     from kaiexman.models import Attempt
-    parent.metadata.attempts.append(
-        Attempt(sequence=1, status="running", exit_code=1)
-    )
+
+    parent.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=1))
     parent.write_metadata()
     exman.finish(parent.metadata.exp_id)
 
-    monkeypatch.setattr(
-        exman, "_current_git_state", lambda: (parent_hash, False)
-    )
+    monkeypatch.setattr(exman, "_current_git_state", lambda: (parent_hash, False))
 
     child, is_new, attempt_num = exman.resume(
         parent.metadata.exp_id, description="child"
@@ -431,14 +415,11 @@ def test_resume_allows_non_terminal(tmp_exman_path, monkeypatch):
 
     # Case A requires the parent to have at least one attempt
     from kaiexman.models import Attempt
-    parent.metadata.attempts.append(
-        Attempt(sequence=1, status="running")
-    )
+
+    parent.metadata.attempts.append(Attempt(sequence=1, status="running"))
     parent.write_metadata()
 
-    monkeypatch.setattr(
-        exman, "_current_git_state", lambda: (parent_hash, False)
-    )
+    monkeypatch.setattr(exman, "_current_git_state", lambda: (parent_hash, False))
 
     # Experiment is still "running" — should be allowed
     exp, is_new, attempt_num = exman.resume(parent.metadata.exp_id)
@@ -451,9 +432,8 @@ def test_finish_defaults_to_success(tmp_exman_path):
     exman = ExMan(root=tmp_exman_path)
     exp = exman.init(description="test")
     from kaiexman.models import Attempt
-    exp.metadata.attempts.append(
-        Attempt(sequence=1, status="running", exit_code=0)
-    )
+
+    exp.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
     exp.write_metadata()
     finished = exman.finish(exp.metadata.exp_id)
     assert finished.metadata.status == "success"
@@ -463,9 +443,8 @@ def test_index_includes_status(tmp_exman_path):
     exman = ExMan(root=tmp_exman_path)
     exp = exman.init(description="test", group="train")
     from kaiexman.models import Attempt
-    exp.metadata.attempts.append(
-        Attempt(sequence=1, status="running", exit_code=0)
-    )
+
+    exp.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
     exp.write_metadata()
     exman.finish(exp.metadata.exp_id)
 
@@ -484,9 +463,8 @@ def test_finish_sets_finished_at_and_locked(tmp_exman_path):
     exman = ExMan(root=tmp_exman_path)
     exp = exman.init(description="test")
     from kaiexman.models import Attempt
-    exp.metadata.attempts.append(
-        Attempt(sequence=1, status="running", exit_code=0)
-    )
+
+    exp.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
     exp.write_metadata()
 
     finished = exman.finish(exp.metadata.exp_id)
@@ -505,9 +483,8 @@ def test_finish_blocks_on_already_locked(tmp_exman_path):
     exman = ExMan(root=tmp_exman_path)
     exp = exman.init(description="test")
     from kaiexman.models import Attempt
-    exp.metadata.attempts.append(
-        Attempt(sequence=1, status="running", exit_code=0)
-    )
+
+    exp.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
     exp.write_metadata()
     exman.finish(exp.metadata.exp_id)
 
@@ -519,9 +496,8 @@ def test_write_metadata_blocks_when_locked(tmp_exman_path):
     exman = ExMan(root=tmp_exman_path)
     exp = exman.init(description="test")
     from kaiexman.models import Attempt
-    exp.metadata.attempts.append(
-        Attempt(sequence=1, status="running", exit_code=0)
-    )
+
+    exp.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
     exp.write_metadata()
     exman.finish(exp.metadata.exp_id)
 
@@ -540,9 +516,8 @@ def test_abort_command_sets_aborted_status(tmp_exman_path):
     exman = ExMan(root=tmp_exman_path)
     exp = exman.init(description="abort test")
     from kaiexman.models import Attempt
-    exp.metadata.attempts.append(
-        Attempt(sequence=1, status="running")
-    )
+
+    exp.metadata.attempts.append(Attempt(sequence=1, status="running"))
     exp.write_metadata()
 
     runner = CliRunner()
@@ -599,9 +574,8 @@ def test_abort_command_blocks_already_locked(tmp_exman_path):
     exman = ExMan(root=tmp_exman_path)
     exp = exman.init(description="abort test")
     from kaiexman.models import Attempt
-    exp.metadata.attempts.append(
-        Attempt(sequence=1, status="running", exit_code=0)
-    )
+
+    exp.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
     exp.write_metadata()
     exman.finish(exp.metadata.exp_id)
 

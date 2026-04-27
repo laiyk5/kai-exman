@@ -169,9 +169,7 @@ def test_run_records_command_in_second_attempt(tmp_exman_path, monkeypatch):
     exp = exman.init(description="retry cmd test")
     from kaiexman.models import Attempt
 
-    exp.metadata.attempts.append(
-        Attempt(sequence=1, status="success", exit_code=0)
-    )
+    exp.metadata.attempts.append(Attempt(sequence=1, status="success", exit_code=0))
     exp.write_metadata()
 
     runner = CliRunner()

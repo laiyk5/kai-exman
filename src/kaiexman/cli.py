@@ -752,6 +752,7 @@ def _sort_experiments(
     reverse = order == "desc"
 
     def key_fn(exp: Experiment) -> Any:
+        """Return sort key for an experiment."""
         if sort_key == "created":
             return exp.metadata.timestamp
         if sort_key == "finished":
@@ -954,6 +955,7 @@ def _build_tree_lines(
         is_root: bool,
         path_ids: set[str],
     ) -> None:
+        """Render a single tree node and its children recursively."""
         status_color = _STATUS_COLORS.get(exp.metadata.status, "white")
         status_label = exp.metadata.status.upper()
         disp_id = _display_id(exp.metadata.exp_id, full_id, short_len)

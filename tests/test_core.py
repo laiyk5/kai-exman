@@ -99,9 +99,7 @@ def test_experiment_finish(tmp_exman_path):
     # finish() requires at least one attempt with an exit_code
     from kaiexman.models import Attempt
 
-    exp.metadata.attempts.append(
-        Attempt(sequence=1, status="running", exit_code=0)
-    )
+    exp.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
     exp.write_metadata()
 
     finished = exman.finish(

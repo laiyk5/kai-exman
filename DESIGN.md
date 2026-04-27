@@ -21,13 +21,13 @@ Inside each folder:
 - `summary.md`: Final post-mortem report and next-step actions.
 
 ## 3. Data Schema (Pydantic Models)
-- **Metadata**: 
+- **Metadata**:
     - `exp_id`: UUID or sequential ID.
     - `timestamp`: ISO format.
     - `git_hash`: Current commit ID.
     - `tags`: List of semantic strings.
     - `data_version`: MD5 or DVC hash.
-- **Metrics**: 
+- **Metrics**:
     - `step`: int.
     - `values`: dict of floats.
     - `timestamp`: epoch float.

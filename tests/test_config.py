@@ -36,9 +36,7 @@ def test_missing_pyproject_ignored():
 def test_pyproject_loads_tool_section(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     pyproject = tmp_path / "pyproject.toml"
-    pyproject.write_text(
-        '[tool.kaiexman]\nshort_id_length = 12\nstrict_mode = true\n'
-    )
+    pyproject.write_text("[tool.kaiexman]\nshort_id_length = 12\nstrict_mode = true\n")
     cfg = ConfigManager()
     assert cfg["short_id_length"] == 12
     assert cfg["strict_mode"] is True
@@ -48,9 +46,7 @@ def test_pyproject_loads_tool_section(tmp_path, monkeypatch):
 def test_cli_overrides_pyproject(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     pyproject = tmp_path / "pyproject.toml"
-    pyproject.write_text(
-        '[tool.kaiexman]\nshort_id_length = 12\n'
-    )
+    pyproject.write_text("[tool.kaiexman]\nshort_id_length = 12\n")
     cfg = ConfigManager(cli_overrides={"short_id_length": 4})
     assert cfg["short_id_length"] == 4
 

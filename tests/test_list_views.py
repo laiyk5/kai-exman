@@ -28,12 +28,8 @@ def test_sort_by_created_descending_is_default(tmp_exman_path):
     assert result.exit_code == 0
     lines = result.output.strip().split("\n")
     # second should appear before first when descending
-    second_idx = next(
-        (i for i, line in enumerate(lines) if "second" in line), -1
-    )
-    first_idx = next(
-        (i for i, line in enumerate(lines) if "first" in line), -1
-    )
+    second_idx = next((i for i, line in enumerate(lines) if "second" in line), -1)
+    first_idx = next((i for i, line in enumerate(lines) if "first" in line), -1)
     assert second_idx < first_idx
 
 
@@ -82,9 +78,8 @@ def test_sort_by_finished(tmp_exman_path):
     exman.init(description="unfinished")
     e2 = exman.init(description="finished")
     from kaiexman.models import Attempt
-    e2.metadata.attempts.append(
-        Attempt(sequence=1, status="running", exit_code=0)
-    )
+
+    e2.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
     e2.write_metadata()
     exman.finish(e2.metadata.exp_id)
 
@@ -151,15 +146,11 @@ def test_log_view_shows_parent_reference(tmp_exman_path, monkeypatch):
     # Parent must be finished before it can be inherited (Case B).
     from kaiexman.models import Attempt
 
-    parent.metadata.attempts.append(
-        Attempt(sequence=1, status="running", exit_code=0)
-    )
+    parent.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
     parent.write_metadata()
     exman.finish(parent.metadata.exp_id, summary="Done.")
 
-    monkeypatch.setattr(
-        exman, "_current_git_state", lambda: ("different_hash", True)
-    )
+    monkeypatch.setattr(exman, "_current_git_state", lambda: ("different_hash", True))
     exman.resume(parent.metadata.exp_id, description="child")
 
     runner = CliRunner()
@@ -178,9 +169,7 @@ def test_oneline_shows_compact_format(tmp_exman_path):
     exman.init(description="baseline", group="train", tags=["v1"])
 
     runner = CliRunner()
-    result = runner.invoke(
-        cli.cli, ["--path", tmp_exman_path, "list", "--oneline"]
-    )
+    result = runner.invoke(cli.cli, ["--path", tmp_exman_path, "list", "--oneline"])
     assert result.exit_code == 0
     assert "DRAFT" in result.output
     assert "train" in result.output
@@ -193,19 +182,16 @@ def test_oneline_shows_inherited_experiments(tmp_exman_path, monkeypatch):
     parent = exman.init(description="parent")
 
     from kaiexman.models import Attempt
+
     parent.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
     parent.write_metadata()
     exman.finish(parent.metadata.exp_id, summary="Done.")
 
-    monkeypatch.setattr(
-        exman, "_current_git_state", lambda: ("different_hash", True)
-    )
+    monkeypatch.setattr(exman, "_current_git_state", lambda: ("different_hash", True))
     child, _is_new, _attempt = exman.resume(parent.metadata.exp_id, description="child")
 
     runner = CliRunner()
-    result = runner.invoke(
-        cli.cli, ["--path", tmp_exman_path, "list", "--oneline"]
-    )
+    result = runner.invoke(cli.cli, ["--path", tmp_exman_path, "list", "--oneline"])
     assert result.exit_code == 0
     assert child.metadata.description in result.output
     assert parent.metadata.description in result.output
@@ -215,16 +201,13 @@ def test_oneline_shows_finished_at_for_terminal(tmp_exman_path):
     exman = ExMan(root=tmp_exman_path)
     exp = exman.init(description="finished_exp")
     from kaiexman.models import Attempt
-    exp.metadata.attempts.append(
-        Attempt(sequence=1, status="running", exit_code=0)
-    )
+
+    exp.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
     exp.write_metadata()
     exman.finish(exp.metadata.exp_id)
 
     runner = CliRunner()
-    result = runner.invoke(
-        cli.cli, ["--path", tmp_exman_path, "list", "--oneline"]
-    )
+    result = runner.invoke(cli.cli, ["--path", tmp_exman_path, "list", "--oneline"])
     assert result.exit_code == 0
     assert "SUCCESS" in result.output
     # The finished_at timestamp should appear (formatted as _oneline_dt)
@@ -241,19 +224,16 @@ def test_tree_shows_lineage_topology(tmp_exman_path, monkeypatch):
     parent = exman.init(description="parent")
 
     from kaiexman.models import Attempt
+
     parent.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
     parent.write_metadata()
     exman.finish(parent.metadata.exp_id, summary="Done.")
 
-    monkeypatch.setattr(
-        exman, "_current_git_state", lambda: ("different_hash", True)
-    )
+    monkeypatch.setattr(exman, "_current_git_state", lambda: ("different_hash", True))
     child, _is_new, _attempt = exman.resume(parent.metadata.exp_id, description="child")
 
     runner = CliRunner()
-    result = runner.invoke(
-        cli.cli, ["--path", tmp_exman_path, "list", "--tree"]
-    )
+    result = runner.invoke(cli.cli, ["--path", tmp_exman_path, "list", "--tree"])
     assert result.exit_code == 0
     # Root marker (finished parent)
     assert "*" in result.output
@@ -270,13 +250,12 @@ def test_tree_sorts_only_roots(tmp_exman_path, monkeypatch):
     exman.init(description="root_a")
 
     from kaiexman.models import Attempt
+
     root_b.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
     root_b.write_metadata()
     exman.finish(root_b.metadata.exp_id, summary="Done.")
 
-    monkeypatch.setattr(
-        exman, "_current_git_state", lambda: ("different_hash", True)
-    )
+    monkeypatch.setattr(exman, "_current_git_state", lambda: ("different_hash", True))
     child, _is_new, _attempt = exman.resume(root_b.metadata.exp_id, description="child")
 
     runner = CliRunner()
@@ -309,6 +288,7 @@ def test_rich_renderer_produces_output(tmp_exman_path, monkeypatch):
     exman.init(description="running_exp")
     finished = exman.init(description="finished_exp")
     from kaiexman.models import Attempt
+
     finished.metadata.attempts.append(
         Attempt(sequence=1, status="running", exit_code=0)
     )
@@ -349,8 +329,6 @@ def test_full_id_flag_shows_full_id(tmp_exman_path):
     exp = exman.init(description="test")
 
     runner = CliRunner()
-    result = runner.invoke(
-        cli.cli, ["--path", tmp_exman_path, "list", "--full-id"]
-    )
+    result = runner.invoke(cli.cli, ["--path", tmp_exman_path, "list", "--full-id"])
     assert result.exit_code == 0
     assert exp.metadata.exp_id in result.output

@@ -449,6 +449,7 @@ class Experiment:
             return ""
 
         def _hash_file(fp: Path) -> str:
+            """Return blake2b hash of a single file."""
             h = hashlib.blake2b(digest_size=32)
             with open(fp, "rb") as f:
                 while chunk := f.read(8192):
