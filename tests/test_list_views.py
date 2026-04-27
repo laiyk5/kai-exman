@@ -241,7 +241,8 @@ def test_tree_shows_lineage_topology(tmp_exman_path, monkeypatch):
     # Child connector
     assert "`-- o" in result.output or "|-- o" in result.output
     assert "parent" in result.output
-    assert "inherited" in result.output
+    # Child description is empty (no longer auto-inherited)
+    assert "(no description)" in result.output
 
 
 def test_tree_sorts_only_roots(tmp_exman_path, monkeypatch):
@@ -263,7 +264,8 @@ def test_tree_sorts_only_roots(tmp_exman_path, monkeypatch):
     assert result.exit_code == 0
 
     # Verify lineage: child appears under root_b, not root_a
-    child_idx = result.output.find(child.metadata.description)
+    child_short_id = child.metadata.exp_id[:8]
+    child_idx = result.output.find(child_short_id)
     root_b_idx = result.output.find("root_b")
     root_a_idx = result.output.find("root_a")
     assert child_idx > root_b_idx

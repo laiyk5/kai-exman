@@ -534,7 +534,15 @@ def test_abort_command_sets_aborted_status(tmp_exman_path):
 
     runner = CliRunner()
     result = runner.invoke(
-        cli, ["--path", tmp_exman_path, "abort", exp.metadata.exp_id]
+        cli,
+        [
+            "--path",
+            tmp_exman_path,
+            "abort",
+            "--summary",
+            "Stopped early.",
+            exp.metadata.exp_id,
+        ],
     )
     assert result.exit_code == 0
     assert "aborted" in result.output.lower()
@@ -559,7 +567,15 @@ def test_abort_command_blocks_no_attempts(tmp_exman_path):
 
     runner = CliRunner()
     result = runner.invoke(
-        cli, ["--path", tmp_exman_path, "abort", exp.metadata.exp_id]
+        cli,
+        [
+            "--path",
+            tmp_exman_path,
+            "abort",
+            "--summary",
+            "Stopped early.",
+            exp.metadata.exp_id,
+        ],
     )
     assert result.exit_code != 0
     assert "no attempts" in result.output.lower()
@@ -582,7 +598,15 @@ def test_abort_command_blocks_already_locked(tmp_exman_path):
 
     runner = CliRunner()
     result = runner.invoke(
-        cli, ["--path", tmp_exman_path, "abort", exp.metadata.exp_id]
+        cli,
+        [
+            "--path",
+            tmp_exman_path,
+            "abort",
+            "--summary",
+            "Stopped early.",
+            exp.metadata.exp_id,
+        ],
     )
     assert result.exit_code != 0
     assert "sealed" in result.output.lower()

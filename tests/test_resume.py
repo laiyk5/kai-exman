@@ -99,7 +99,7 @@ def test_resume_logic_dirty_creates_new_experiment(tmp_exman_path, monkeypatch):
     assert attempt_num == 1
     assert child.metadata.exp_id != parent.metadata.exp_id
     assert child.metadata.parent_id == parent.metadata.exp_id
-    assert child.metadata.description == f"inherited from {parent.metadata.exp_id}"
+    assert child.metadata.description == ""
 
 
 def test_resume_logic_dirty_copies_checkpoints(tmp_exman_path, monkeypatch):

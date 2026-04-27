@@ -17,6 +17,10 @@ class LockedExperimentError(RuntimeError):
     """
 
 
+class MissingSummaryError(RuntimeError):
+    """Raised when finish() is called without a summary in non-interactive mode."""
+
+
 class Attempt(BaseModel):
     """A single execution attempt within an experiment.
 
@@ -67,6 +71,7 @@ class Metadata(BaseModel):
     group: str = "default"
     finished_at: str = ""
     locked: bool = False
+    summary: str = ""
 
 
 class MetricsRow(BaseModel):

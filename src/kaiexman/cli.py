@@ -22,7 +22,35 @@ from rich.console import Console
 from kaiexman.config import ConfigManager
 from kaiexman.experiment import Experiment, validate_group, validate_tag
 from kaiexman.manager import ExMan
-from kaiexman.models import LockedExperimentError
+from kaiexman.models import LockedExperimentError, MissingSummaryError
+
+
+def _require_text(value: str, prompt: str, empty_msg: str) -> str:
+    """Return value if non-empty, otherwise open an editor or raise.
+
+    In interactive mode (TTY), opens the system editor (via click.edit).
+    In non-interactive mode, raises a ClickException.
+
+    Args:
+        value: The provided value from CLI option.
+        prompt: Header text to seed the editor buffer.
+        empty_msg: Error message if the value is still empty after editing.
+
+    Returns:
+        The non-empty text string.
+
+    Raises:
+        click.ClickException: If non-interactive and value is empty, or if
+            the editor returns empty content.
+    """
+    if value:
+        return value
+    if not sys.stdin.isatty():
+        raise click.ClickException(empty_msg)
+    edited = click.edit(text=f"# {prompt}\n")
+    if edited is None or not edited.strip():
+        raise click.ClickException(empty_msg)
+    return edited.strip()
 
 
 class AliasedGroup(click.Group):
@@ -240,6 +268,14 @@ def init(
     Creates a directory structure, captures Git state, and optionally
     loads a YAML configuration file.
     """
+    description = _require_text(
+        description,
+        prompt="Describe the intent of this experiment...",
+        empty_msg=(
+            "Experiment description is required."
+            " Use --description or run interactively."
+        ),
+    )
     _validate_group(group)
     cfg = None
     if config and Path(config).exists():
@@ -306,6 +342,14 @@ def run(
 
     if resume:
         resolved_id = _resolve_exp_id(exman, resume)
+        description = _require_text(
+            description,
+            prompt="Describe what is being changed or tested in this fork...",
+            empty_msg=(
+                "Description is required for resume."
+                " Use --description or run interactively."
+            ),
+        )
         try:
             exp, is_new, attempt_num = exman.resume(
                 exp_id=resolved_id,
@@ -317,6 +361,14 @@ def run(
         except LockedExperimentError as exc:
             raise click.ClickException(str(exc)) from exc
     else:
+        description = _require_text(
+            description,
+            prompt="Describe the intent of this experiment...",
+            empty_msg=(
+                "Experiment description is required."
+                " Use --description or run interactively."
+            ),
+        )
         if group is not None:
             _validate_group(group)
         exp = exman.init(
@@ -686,6 +738,7 @@ def _build_log_lines(
         status_color = _STATUS_COLORS.get(exp.metadata.status, "white")
         dt = _format_dt(exp.metadata.timestamp)
         desc = exp.metadata.description or ""
+        summary = exp.metadata.summary or ""
         params = _params_line(exp.config)
 
         tag_part = ""
@@ -706,8 +759,10 @@ def _build_log_lines(
         lines.append(f"Author: {getpass.getuser()}")
         lines.append(f"Date:   {dt}  |  Group: {exp.metadata.group}")
         lines.append("")
+
+        # Prominent description at the top
         if desc:
-            lines.append(desc)
+            lines.append(f"[bold cyan]Intent:[/bold cyan] {desc}")
         else:
             lines.append("[dim](No description provided)[/dim]")
 
@@ -722,6 +777,11 @@ def _build_log_lines(
         if footer_parts:
             lines.append("")
             lines.append(" | ".join(footer_parts))
+
+        # Summary at the bottom for sealed experiments
+        if summary:
+            lines.append("")
+            lines.append(f"[bold green]Conclusion:[/bold green] {summary}")
 
         lines.append("")
     return lines
@@ -811,7 +871,11 @@ def _build_tree_lines(
         status_color = _STATUS_COLORS.get(exp.metadata.status, "white")
         status_label = exp.metadata.status.upper()
         disp_id = _display_id(exp.metadata.exp_id, full_id, short_len)
-        desc = exp.metadata.description or "[dim](no description)[/dim]"
+        raw_desc = exp.metadata.description or ""
+        if raw_desc:
+            desc = raw_desc if len(raw_desc) <= 30 else raw_desc[:27] + "..."
+        else:
+            desc = "[dim](no description)[/dim]"
 
         is_draft = not exp.metadata.attempts
         if is_draft:
@@ -844,9 +908,15 @@ def _build_tree_lines(
 
 @cli.command()
 @click.argument("exp_id")
-@click.option("--notes", "-n", default="", help="Post-mortem notes")
+@click.option(
+    "--summary",
+    "-s",
+    default="",
+    help="Mandatory conclusion reflecting on the experiment",
+)
+@click.option("--notes", "-n", default="", help="Additional post-mortem notes")
 @click.pass_context
-def finish(ctx: click.Context, exp_id: str, notes: str) -> None:
+def finish(ctx: click.Context, exp_id: str, summary: str, notes: str) -> None:
     """Close an experiment and generate summary.md.
 
     Computes best metrics, determines final status from the last attempt's
@@ -857,17 +927,24 @@ def finish(ctx: click.Context, exp_id: str, notes: str) -> None:
       - exit_code != 0        → failed
       - exit_code is None     → aborted
     """
+    summary = _require_text(
+        summary,
+        prompt="Write a conclusion reflecting on this experiment...",
+        empty_msg="Experiment summary is required. Use --summary or run interactively.",
+    )
     cfg_mgr: ConfigManager = ctx.obj["config"]
     exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
     resolved_id = _resolve_exp_id(exman, exp_id)
 
     try:
-        exp = exman.finish(exp_id=resolved_id, notes=notes)
+        exp = exman.finish(exp_id=resolved_id, notes=notes, summary=summary)
     except RuntimeError as exc:
         raise click.ClickException(str(exc)) from exc
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
     except LockedExperimentError as exc:
+        raise click.ClickException(str(exc)) from exc
+    except MissingSummaryError as exc:
         raise click.ClickException(str(exc)) from exc
 
     short_len = cfg_mgr.get("short_id_length", 8)
@@ -884,15 +961,26 @@ def finish(ctx: click.Context, exp_id: str, notes: str) -> None:
 
 @cli.command()
 @click.argument("exp_id")
-@click.option("--notes", "-n", default="", help="Post-mortem notes")
+@click.option(
+    "--summary",
+    "-s",
+    default="",
+    help="Mandatory conclusion reflecting on the experiment",
+)
+@click.option("--notes", "-n", default="", help="Additional post-mortem notes")
 @click.pass_context
-def abort(ctx: click.Context, exp_id: str, notes: str) -> None:
+def abort(ctx: click.Context, exp_id: str, summary: str, notes: str) -> None:
     """Abort an experiment and generate summary.md.
 
     Marks the last attempt as aborted (no exit code) and seals the lab
     record. Use this when an experiment was stopped manually or did not
     complete normally.
     """
+    summary = _require_text(
+        summary,
+        prompt="Write a conclusion reflecting on this experiment...",
+        empty_msg="Experiment summary is required. Use --summary or run interactively.",
+    )
     cfg_mgr: ConfigManager = ctx.obj["config"]
     exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
     resolved_id = _resolve_exp_id(exman, exp_id)
@@ -916,10 +1004,12 @@ def abort(ctx: click.Context, exp_id: str, notes: str) -> None:
     exp.write_metadata()
 
     try:
-        finished = exman.finish(exp_id=resolved_id, notes=notes)
+        finished = exman.finish(exp_id=resolved_id, notes=notes, summary=summary)
     except RuntimeError as exc:
         raise click.ClickException(str(exc)) from exc
     except LockedExperimentError as exc:
+        raise click.ClickException(str(exc)) from exc
+    except MissingSummaryError as exc:
         raise click.ClickException(str(exc)) from exc
 
     short_len = cfg_mgr.get("short_id_length", 8)
@@ -961,6 +1051,7 @@ def show(ctx: click.Context, exp_id: str, full_id: bool) -> None:
         f"[bold cyan]Group:[/bold cyan] {exp.metadata.group}",
         f"[bold cyan]Status:[/bold cyan] {exp.metadata.status}",
         f"[bold cyan]Description:[/bold cyan] {exp.metadata.description or '-'}",
+        f"[bold cyan]Summary:[/bold cyan] {exp.metadata.summary or '-'}",
         f"[bold cyan]Data Version:[/bold cyan] {exp.metadata.data_version or '-'}",
         f"[bold cyan]Git Hash:[/bold cyan] {exp.metadata.git_hash or 'N/A'}",
         f"[bold cyan]Git Dirty:[/bold cyan] {exp.metadata.git_dirty}",

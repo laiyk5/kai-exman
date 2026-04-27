@@ -41,7 +41,8 @@ Initialize an experiment manager and start tracking::
     # Finish the experiment (status auto-determined from last attempt)
     finished = exman.finish(
         exp_id=exp.metadata.exp_id,
-        notes="Good convergence."
+        notes="Good convergence.",
+        summary="Reached target accuracy; next step LR sweep."
     )
 
 Resume and lineage::
@@ -74,17 +75,18 @@ Global options::
 
     kai-exman --path ./outputs --strict <command>
 
-Initialize a new experiment::
+Initialize a new experiment (``--description`` is mandatory)::
 
     kai-exman init --description "Baseline run" --tags "baseline,llama3" --config config.yaml --group train
 
-Run a command inside an experiment context::
+Run a command inside an experiment context (``--description`` is mandatory)::
 
     # Fresh experiment
     kai-exman run --description "training run" -- python train.py
 
     # Resume an experiment (automatic Case A / Case B detection)
-    kai-exman run --resume <exp_id> -- python train.py
+    # In Case B (evolution), you must describe the fork; parent's description is not inherited.
+    kai-exman run --resume <exp_id> --description "tune LR after refactor" -- python train.py
 
 List experiments::
 
@@ -125,9 +127,9 @@ List all tags::
 
     kai-exman tags
 
-Finish an experiment and generate summary.md::
+Finish an experiment and generate summary.md (``--summary`` is mandatory)::
 
-    kai-exman finish <exp_id> --notes "Best run so far"
+    kai-exman finish <exp_id> --summary "Best run so far" --notes "Observed 2% gain"
 
 Status is auto-determined from the last attempt's exit code:
 
@@ -135,9 +137,9 @@ Status is auto-determined from the last attempt's exit code:
 - Non-zero -> ``failed``
 - ``None`` (stopped) -> ``aborted``
 
-Abort an experiment manually::
+Abort an experiment manually (``--summary`` is mandatory)::
 
-    kai-exman abort <exp_id> --notes "Stopped early due to NaN"
+    kai-exman abort <exp_id> --summary "Stopped early due to NaN"
 
 Use ``abort`` when an experiment was stopped manually or did not complete
 normally. It marks the last attempt as aborted and seals the record.

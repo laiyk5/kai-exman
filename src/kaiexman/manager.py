@@ -364,6 +364,7 @@ class ExMan:
         self,
         exp_id: str,
         notes: str = "",
+        summary: str = "",
     ) -> Experiment:
         """Finalize an experiment and generate its summary.
 
@@ -376,7 +377,9 @@ class ExMan:
 
         Args:
             exp_id: Full experiment identifier.
-            notes: Optional post-mortem notes for the summary.
+            notes: Optional additional post-mortem notes for the summary file.
+            summary: Mandatory conclusion reflecting on the experiment.
+                Saved to metadata.json before the record is sealed.
 
         Returns:
             The finished Experiment instance.
@@ -418,6 +421,7 @@ class ExMan:
         exp.write_summary(status=status, notes=notes, best_metrics=best_metrics)
 
         exp.metadata.status = status
+        exp.metadata.summary = summary
         exp.metadata.finished_at = datetime.now().isoformat()
         exp.metadata.locked = True
         exp.write_metadata(force=True)
@@ -584,7 +588,7 @@ class ExMan:
 
         # Case B: Logic-Dirty Resume (Evolution)
         child = self.init(
-            description=description or f"inherited from {parent.metadata.exp_id}",
+            description=description,
             tags=tags if tags is not None else list(parent.metadata.tags),
             config=config if config is not None else dict(parent.config),
             data_version=data_version,

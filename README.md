@@ -25,24 +25,30 @@ pip install -e ".[test]"
 
 ### Initialize a new experiment
 
+**Description is mandatory.** In non-interactive mode, use `--description`. In
+interactive mode, omitting it opens your system editor (`$EDITOR` or `vim`)::
+
 ```bash
 kai-exman init --description "baseline training" --tags "baseline,v1" --group train
 ```
 
 ### Run a command inside an experiment context
 
+**Description is mandatory** for both fresh experiments and forks (Case B resume).
+In interactive mode, omitting `--description` opens your system editor::
+
 ```bash
 # Fresh experiment
 kai-exman run --description "training run" -- python train.py
 
 # Resume an experiment (automatic Case A / Case B detection)
-kai-exman run --resume <exp_id> -- python train.py
+kai-exman run --resume <exp_id> --description "tune LR after refactor" -- python train.py
 ```
 
 When resuming, Kai-Exman compares the current Git state against the parent experiment:
 
 - **Case A (Retry)**: Same commit, clean workspace. Appends a new attempt to the existing experiment.
-- **Case B (Evolution)**: Different commit or dirty workspace. Creates a new experiment with the old one as its parent.
+- **Case B (Evolution)**: Different commit or dirty workspace. Creates a new experiment with the old one as its parent. You must provide a new description for the fork; the parent's description is **not** inherited.
 
 ### Track metrics and artifacts (Python API)
 
@@ -64,7 +70,11 @@ best = exp.compute_best_metrics()
 # {"loss": {"max": 1.5, "min": 0.8}, "acc": {"max": 0.6, "min": 0.3}}
 
 # Finish the experiment (status auto-determined from last attempt)
-finished = exman.finish(exp.metadata.exp_id, notes="Solid baseline.")
+finished = exman.finish(
+    exp_id=exp.metadata.exp_id,
+    notes="Solid baseline.",
+    summary="Converged cleanly; next step is LR sweep."
+)
 ```
 
 ### List and filter experiments
@@ -119,8 +129,11 @@ kai-exman rm --clear-trash  # permanently empty trash
 
 ### Finish an experiment and generate a summary
 
+**Summary is mandatory.** In non-interactive mode, use `--summary`. In
+interactive mode, omitting it opens your system editor::
+
 ```bash
-kai-exman finish <exp_id> --notes "Best run so far"
+kai-exman finish <exp_id> --summary "Best run so far" --notes "Observed 2% gain"
 ```
 
 Status is determined automatically from the last attempt's exit code:
@@ -133,8 +146,11 @@ Status is determined automatically from the last attempt's exit code:
 
 ### Abort an experiment manually
 
+**Summary is mandatory.** In non-interactive mode, use `--summary`. In
+interactive mode, omitting it opens your system editor::
+
 ```bash
-kai-exman abort <exp_id> --notes "Stopped early due to NaN"
+kai-exman abort <exp_id> --summary "Stopped early due to NaN"
 ```
 
 Use `abort` when an experiment was stopped manually or did not complete
