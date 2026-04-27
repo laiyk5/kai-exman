@@ -11,6 +11,26 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+class Attempt(BaseModel):
+    """A single execution attempt within an experiment.
+
+    Attributes:
+        sequence: Attempt number (1, 2, 3...).
+        start_time: ISO 8601 timestamp when the attempt started.
+        end_time: ISO 8601 timestamp when the attempt ended (empty if running).
+        status: Final status of the attempt (e.g., "success", "failed").
+        exit_code: Process exit code, or None if not applicable.
+        reason: Human-readable reason for this attempt (e.g., "manual resume").
+    """
+
+    sequence: int
+    start_time: str = Field(default_factory=lambda: datetime.now().isoformat())
+    end_time: str = ""
+    status: str = "running"
+    exit_code: int | None = None
+    reason: str = ""
+
+
 class Metadata(BaseModel):
     """Experiment metadata captured at initialization.
 
@@ -24,6 +44,8 @@ class Metadata(BaseModel):
         data_version: Optional data version or hash for reproducibility.
         description: Human-readable description of the experiment.
         status: Current experiment status (default: "running").
+        parent_id: ID of the parent experiment if this is an inherited run.
+        attempts: List of execution attempts for resumption tracking.
     """
 
     exp_id: str
@@ -34,6 +56,8 @@ class Metadata(BaseModel):
     data_version: str = ""
     description: str = ""
     status: str = "running"
+    parent_id: str = ""
+    attempts: list[Attempt] = Field(default_factory=list)
 
 
 class MetricsRow(BaseModel):

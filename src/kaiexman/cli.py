@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import getpass
 import os
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -251,6 +252,118 @@ def init(ctx: click.Context, description: str, tags: str, config: str | None) ->
             click.echo("Warning: Working tree has uncommitted changes")
 
 
+@cli.command()
+@click.option("--resume", help="Resume from experiment ID")
+@click.option("--description", "-d", default="", help="Experiment description")
+@click.option("--tags", "-t", default="", help="Comma-separated tags")
+@click.option("--config", "-c", help="Path to config YAML file")
+@click.argument("command", nargs=-1, required=True)
+@click.pass_context
+def run(
+    ctx: click.Context,
+    resume: str | None,
+    description: str,
+    tags: str,
+    config: str | None,
+    command: tuple[str, ...],
+) -> None:
+    """Run a command within an experiment context.
+
+    Creates a new experiment (or resumes an existing one) and executes the
+    provided command with KAI_EXMAN_* environment variables set.
+
+    Usage:
+        kai-exman run -- python train.py
+        kai-exman run --resume <exp_id> -- python train.py
+    """
+    cfg = None
+    if config and Path(config).exists():
+        with open(config, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+
+    tag_list = [t.strip() for t in tags.split(",")] if tags else []
+    cfg_mgr: ConfigManager = ctx.obj["config"]
+    exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
+
+    if resume:
+        resolved_id = _resolve_exp_id(exman, resume)
+        exp, is_new, attempt_num = exman.resume(
+            exp_id=resolved_id,
+            description=description,
+            tags=tag_list or None,
+            config=cfg,
+        )
+    else:
+        exp = exman.init(
+            description=description,
+            tags=tag_list,
+            config=cfg,
+        )
+        is_new = True
+        attempt_num = 1
+
+    short_len = cfg_mgr.get("short_id_length", 8)
+    short_id = exp.metadata.exp_id[:short_len]
+
+    # Set resume environment variables
+    env = os.environ.copy()
+    env["KAI_EXMAN_RESUME"] = "1"
+    env["KAI_EXMAN_ATTEMPT_COUNT"] = str(attempt_num)
+    if resume and not is_new:
+        env["KAI_EXMAN_PARENT_PATH"] = str(exp.root)
+    elif resume and is_new:
+        parent = exman.get(resolved_id)
+        if parent is not None:
+            env["KAI_EXMAN_PARENT_PATH"] = str(parent.root)
+
+    if sys.stdout.isatty():
+        console = _get_console(ctx)
+        if is_new and resume:
+            msg = (
+                f"[bold green]Creating new experiment {short_id} "
+                f"inherited from {resolved_id[:short_len]}.[/bold green]"
+            )
+        elif resume:
+            msg = (
+                f"[bold blue]Resuming experiment {short_id} "
+                f"(attempt {attempt_num}).[/bold blue]"
+            )
+        else:
+            msg = f"[bold green]Running experiment {short_id}.[/bold green]"
+        console.print(msg)
+    else:
+        if is_new and resume:
+            click.echo(
+                f"Creating new experiment {short_id} inherited from "
+                f"{resolved_id[:short_len]}."
+            )
+        elif resume:
+            click.echo(f"Resuming experiment {short_id} (attempt {attempt_num}).")
+        else:
+            click.echo(f"Running experiment {short_id}.")
+
+    # Execute the command
+    result = subprocess.run(command, env=env)
+
+    # Update attempt record if resuming
+    if resume and not is_new and exp.metadata.attempts:
+        last_attempt = exp.metadata.attempts[-1]
+        last_attempt.end_time = datetime.now().isoformat()
+        last_attempt.exit_code = result.returncode
+        last_attempt.status = "success" if result.returncode == 0 else "failed"
+        # Promote global status from latest attempt
+        exp.metadata.status = last_attempt.status
+        exp.write_metadata()
+
+    # Update overall status for new experiments
+    if is_new:
+        exp.update_status(
+            "success" if result.returncode == 0 else "failed"
+        )
+
+    sys.exit(result.returncode)
+
+
 @cli.command(name="list")
 @click.option(
     "--sort-by",
@@ -442,10 +555,11 @@ def _list_rich(
                 tags_display = ", ".join(exp.metadata.tags)
                 tags_part = f"[bold magenta][{tags_display}][/bold magenta]  "
 
+            prefix = "[dim]->[/dim] " if exp.metadata.parent_id else ""
             disp_id = _display_id(exp.metadata.exp_id, full_id, short_length)
             id_width = 16 if full_id else short_length
             line = (
-                f"[yellow]{disp_id:{id_width}}[/yellow]  "
+                f"{prefix}[yellow]{disp_id:{id_width}}[/yellow]  "
                 f"[cyan]{date_str:16}[/cyan]  "
                 f"[{status_color}]{status_label:10}[/{status_color}]  "
                 f"{tags_part}"
@@ -467,12 +581,19 @@ def _list_rich(
             if exp.metadata.tags:
                 tags_display = ", ".join(exp.metadata.tags)
                 tag_part = f" [magenta](tag: {tags_display})[/magenta]"
+            prefix = "-> " if exp.metadata.parent_id else ""
             disp_id = _display_id(exp.metadata.exp_id, full_id, short_length)
             console.print(
-                f"[yellow]experiment {disp_id}[/yellow]"
+                f"{prefix}[yellow]experiment {disp_id}[/yellow]"
                 f"{tag_part}"
                 f" [[{status_color}]{exp.metadata.status}[/{status_color}]]"
             )
+
+            if exp.metadata.parent_id:
+                parent_short = exp.metadata.parent_id[:short_length]
+                console.print(
+                    f"    [dim]inherited from {parent_short}[/dim]"
+                )
 
             # Metadata
             author = getpass.getuser()
@@ -534,10 +655,11 @@ def _list_plain(
                 tags_display = ", ".join(exp.metadata.tags)
                 tags_part = f"[{tags_display}]  "
 
+            prefix = "-> " if exp.metadata.parent_id else ""
             disp_id = _display_id(exp.metadata.exp_id, full_id, short_length)
             id_width = 16 if full_id else short_length
             line = (
-                f"{disp_id:{id_width}}  {date_str:16}  {status_label:10}  "
+                f"{prefix}{disp_id:{id_width}}  {date_str:16}  {status_label:10}  "
                 f"{tags_part}{desc}"
             )
             if sort_by:
@@ -555,8 +677,13 @@ def _list_plain(
             if exp.metadata.tags:
                 tags_display = ", ".join(exp.metadata.tags)
                 tag_part = f" (tag: {tags_display})"
+            prefix = "-> " if exp.metadata.parent_id else ""
             disp_id = _display_id(exp.metadata.exp_id, full_id, short_length)
-            click.echo(f"experiment {disp_id}{tag_part} [{exp.metadata.status}]")
+            status_part = f"[{exp.metadata.status}]"
+            click.echo(f"{prefix}experiment {disp_id}{tag_part} {status_part}")
+            if exp.metadata.parent_id:
+                parent_short = exp.metadata.parent_id[:short_length]
+                click.echo(f"    inherited from {parent_short}")
             click.echo(f"Author: {getpass.getuser()}")
             click.echo(f"Date:   {dt}")
             click.echo("")
@@ -655,6 +782,11 @@ def show(ctx: click.Context, exp_id: str, full_id: bool) -> None:
         )
         meta_table.add_row("[bold]Git Hash[/bold]", exp.metadata.git_hash or "N/A")
         meta_table.add_row("[bold]Git Dirty[/bold]", str(exp.metadata.git_dirty))
+        if exp.metadata.parent_id:
+            parent_disp = _display_id(
+                exp.metadata.parent_id, full_id, short_len
+            )
+            meta_table.add_row("[bold]Parent[/bold]", parent_disp)
         meta_table.add_row("[bold]Path[/bold]", str(exp.root))
 
         meta_panel = Panel(
@@ -694,9 +826,31 @@ def show(ctx: click.Context, exp_id: str, full_id: bool) -> None:
                 border_style="magenta",
             )
 
-        console.print(meta_panel)
-        console.print(cfg_panel)
-        console.print(metrics_panel)
+        panels = [meta_panel, cfg_panel, metrics_panel]
+
+        if exp.metadata.attempts:
+            attempts_table = Table(show_header=True, header_style="bold yellow")
+            attempts_table.add_column("Run")
+            attempts_table.add_column("Start")
+            attempts_table.add_column("End")
+            attempts_table.add_column("Status")
+            for att in exp.metadata.attempts:
+                name = att.reason or f"run_{att.sequence}"
+                attempts_table.add_row(
+                    name,
+                    att.start_time[:19] if att.start_time else "-",
+                    att.end_time[:19] if att.end_time else "-",
+                    att.status,
+                )
+            attempts_panel = Panel(
+                attempts_table,
+                title="[bold yellow]Attempts[/bold yellow]",
+                border_style="yellow",
+            )
+            panels.append(attempts_panel)
+
+        for panel in panels:
+            console.print(panel)
     else:
         click.echo(f"ID: {disp_id}")
         click.echo(f"Status: {exp.metadata.status}")
@@ -704,6 +858,8 @@ def show(ctx: click.Context, exp_id: str, full_id: bool) -> None:
         click.echo(f"Data Version: {exp.metadata.data_version or '-'}")
         click.echo(f"Git Hash: {exp.metadata.git_hash or 'N/A'}")
         click.echo(f"Git Dirty: {exp.metadata.git_dirty}")
+        if exp.metadata.parent_id:
+            click.echo(f"Parent: {exp.metadata.parent_id[:short_len]}")
         click.echo(f"Path: {exp.root}")
         click.echo("")
         if exp.config:
@@ -720,6 +876,19 @@ def show(ctx: click.Context, exp_id: str, full_id: bool) -> None:
                 click.echo(f"{key:<20} {vals['max']:>12.6f} {vals['min']:>12.6f}")
         else:
             click.echo("Best Metrics: No metrics recorded.")
+        if exp.metadata.attempts:
+            click.echo("")
+            click.echo("Attempts:")
+            click.echo(
+                f"{'Run':<10} {'Start':<20} {'End':<20} {'Status'}"
+            )
+            for att in exp.metadata.attempts:
+                name = att.reason or f"run_{att.sequence}"
+                start = att.start_time[:19] if att.start_time else "-"
+                end = att.end_time[:19] if att.end_time else "-"
+                click.echo(
+                    f"{name:<10} {start:<20} {end:<20} {att.status}"
+                )
 
 
 @cli.command(name="tag")

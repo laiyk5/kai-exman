@@ -9,7 +9,14 @@ A lightweight, filesystem-first experiment management toolkit designed for repro
 
    usage
    api
-   design_philosophy
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Design Specifications:
+
+   design/philosophy
+   design/specs
+   design/organization
 
 Indices and tables
 ==================

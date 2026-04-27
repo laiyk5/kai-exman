@@ -2,7 +2,7 @@
 
 This document defines the architectural decisions and technical specifications of Kai-Exman. It is the authoritative reference for how the system is built and why.
 
-For process and workflow guidelines, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
+For process and workflow guidelines, see `CONTRIBUTING.md` in the repository root.
 
 ---
 
@@ -455,3 +455,102 @@ exp, purged = exman.remove(exp_id="abc123...", dry_run=False)
 # Empty trash entirely
  deleted = exman.clear_trash(dry_run=False)
 ```
+
+---
+
+## 11. Lifecycle: Resumption & Lineage
+
+### Rationale
+
+Experiments fail. Networks drop, disks fill, and hyperparameters need tuning. A rigorous system must distinguish between two recovery modes:
+
+| Mode | Code State | Behavior | Identity |
+| --- | --- | --- | --- |
+| **Retry** (Case A) | Unchanged (Logic-Clean) | Re-open existing experiment, append new attempt. | Same ID |
+| **Evolution** (Case B) | Changed (Logic-Dirty) | Create new experiment, copy artifacts, link parent. | New ID |
+
+This prevents "identity confusion" where a modified run overwrites results from the original commit.
+
+### Metadata Schema
+
+```python
+class Attempt(BaseModel):
+    sequence: int
+    start_time: str
+    end_time: str = ""
+    status: str = "running"
+    exit_code: int | None = None
+    reason: str = ""
+
+class Metadata(BaseModel):
+    # ... existing fields ...
+    parent_id: str = ""      # Set for evolved experiments (Case B)
+    attempts: list[Attempt] = []  # Populated for retries (Case A)
+```
+
+### Context-Aware Resume Logic
+
+``ExMan.resume()`` and ``kai-exman run --resume <ID>`` implement automatic case detection:
+
+1. Capture current Git state (hash + dirty flag on critical paths).
+2. Compare against the parent experiment's recorded ``git_hash``.
+3. **Case A** (hash matches and workspace is clean):
+   - Append a new ``Attempt`` record with ``sequence = len(attempts) + 1`` and ``reason = "run_N"``.
+   - Set environment variable ``KAI_EXMAN_ATTEMPT_COUNT`` to the new sequence number.
+4. **Case B** (hash differs or workspace is dirty):
+   - Call ``ExMan.init()`` with a new UUID.
+   - Set ``metadata.parent_id`` to the old experiment ID.
+   - Symlink all files from ``parent/artifacts/checkpoints/`` into the new experiment.
+     Falls back to a hard copy if symlinking fails (e.g., on Windows without Developer Mode).
+   - Set ``KAI_EXMAN_PARENT_PATH`` to the parent's root directory.
+
+### Environment Variables
+
+When ``kai-exman run`` executes a command, the following variables are injected:
+
+| Variable | Value | When Set |
+| --- | --- | --- |
+| ``KAI_EXMAN_RESUME`` | ``1`` | Always when ``--resume`` is used. |
+| ``KAI_EXMAN_PARENT_PATH`` | Absolute path to parent experiment root | Case B (new inherited experiment). |
+| ``KAI_EXMAN_ATTEMPT_COUNT`` | Attempt sequence number (1, 2, 3...) | Case A (retry of existing experiment). |
+
+### Passive Logging Approach
+
+Kai-Exman does not manage the user's log files directly. Instead, it provides ``KAI_EXMAN_ATTEMPT_COUNT`` so the user's script can name its own log files:
+
+```python
+import os
+attempt = os.environ.get("KAI_EXMAN_ATTEMPT_COUNT", "1")
+log_file = f"run{attempt}.log"  # run1.log, run2.log, ...
+```
+
+This avoids the fragility of automatic log rotation while giving the user full control over log naming and location.
+
+### Status Promotion
+
+When an experiment has multiple attempts, its global status (shown in ``list`` and ``show``) is always the status of the latest attempt. For example, if Attempt 1 was ``failed`` but Attempt 2 is ``success``, the experiment is displayed as ``success``.
+
+```bash
+# Fresh experiment
+kai-exman run -- python train.py
+
+# Resume (automatic Case A / Case B detection)
+kai-exman run --resume <exp_id> -- python train.py
+```
+
+| Option | Description |
+| --- | --- |
+| ``--resume`` | Experiment ID to resume from. Triggers context-aware logic. |
+| ``-d, --description`` | Description for a new experiment (Case B). |
+| ``-t, --tags`` | Tags for a new experiment (Case B). |
+| ``-c, --config`` | Config YAML for a new experiment (Case B). |
+
+After the command exits, the last attempt record (Case A) or the experiment status (Case B) is updated with the exit code.
+
+### UI: Lineage Indicators
+
+| Command | Indicator | Meaning |
+| --- | --- | --- |
+| ``list`` | ``->`` prefix before ID | Experiment has a ``parent_id``. |
+| ``show`` | ``Parent: <short_id>`` row | Displays the parent experiment link. |
+| ``show`` | ``Attempts`` panel | Table of all retry attempts with start/end times and status. |

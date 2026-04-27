@@ -79,8 +79,8 @@ class Experiment:
         self._bad_cases_path = root / "artifacts" / "bad_cases.json"
         self._lock = Lock()
 
+    @staticmethod
     def _git_info(
-        self,
         cwd: str | None = None,
         critical_paths: list[str] | None = None,
     ) -> tuple[str, bool]:

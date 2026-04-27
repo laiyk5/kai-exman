@@ -1,6 +1,6 @@
 # Contributing to Kai-Exman
 
-Thank you for your interest in making Kai-Exman more rigorous. This document defines our engineering workflow. For technical architecture and system specifications, see [docs/design/specs.md](docs/design/specs.md).
+Thank you for your interest in making Kai-Exman more rigorous. This document defines our engineering workflow. For technical architecture and system specifications, see [docs/source/design/specs.md](docs/source/design/specs.md).
 
 ---
 
@@ -169,11 +169,56 @@ Intentional deviations from standards, shortcuts, or known imperfections must be
 
 ---
 
-## 7. Technical Reference
+## 7. Documentation Policy
+
+### Design First
+
+Kai-Exman follows a **design-first** principle for all core features. Before any implementation code is written, a formal Technical Design Document (TDD) must be submitted, reviewed, and approved.
+
+- **Location**: All design documents live under `docs/source/design/`.
+- **Scope**: Any feature that introduces a new CLI command, modifies the metadata schema, changes the storage layout, or affects the experiment lifecycle requires a TDD.
+- **Process**:
+  1. Write the design document in the appropriate format.
+  2. Submit it for review in a dedicated documentation PR or as the first commit of a feature branch.
+  3. Implementation begins only after the design is approved by the Project Lead.
+
+### Document Formats
+
+We use two formats, chosen by the nature of the content:
+
+| Format | Extension | Purpose | Parser |
+| --- | --- | --- | --- |
+| **reStructuredText** | `.rst` | API reference, structural documents, Sphinx toctrees | Native Sphinx |
+| **MyST Markdown** | `.md` | Design rationale, user workflows, guiding principles | `myst_parser` |
+
+- Use **`.rst`** for autodoc-generated API pages, index files, and any document that relies heavily on Sphinx directives.
+- Use **`.md` (MyST)** for design specifications, philosophical documents, and workflow guides. MyST allows full Sphinx cross-referencing while maintaining the readability of Markdown.
+
+### Directory Layout
+
+```text
+docs/source/
+├── conf.py                 # Sphinx configuration
+├── index.rst               # Master toctree
+├── api.rst                 # API reference (.rst)
+├── usage.rst               # User guide (.rst)
+└── design/
+    ├── philosophy.rst      # Core design principles (.rst)
+    ├── specs.md            # Technical specifications (.md)
+    └── organization.md     # Feature design documents (.md)
+```
+
+- The `design/` directory is the single source of truth for architectural decisions.
+- Cross-references between `.rst` and `.md` files are fully supported via `myst_parser`.
+- All documents must build cleanly with `make html` — zero warnings.
+
+---
+
+## 8. Technical Reference
 
 For detailed system specifications, including the ID system, tag format, metadata schema, and UI design rules, see:
 
-- **[docs/design/specs.md](docs/design/specs.md)** -- Architectural decisions and technical specifications.
+- **[docs/source/design/specs.md](docs/source/design/specs.md)** -- Architectural decisions and technical specifications.
 
 ---
 

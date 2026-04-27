@@ -14,7 +14,7 @@ from typing import Any, List, Tuple
 
 from kaiexman.config import ConfigManager
 from kaiexman.experiment import Experiment, validate_tag
-from kaiexman.models import Metadata
+from kaiexman.models import Attempt, Metadata
 
 
 class ExMan:
@@ -130,6 +130,10 @@ class ExMan:
     ) -> Experiment | None:
         """Finalize an experiment and generate its summary.
 
+        If the experiment has attempt history, the last attempt's status is
+        also updated to match the final status, ensuring the global status
+        and attempt history remain consistent.
+
         Args:
             exp_id: Full experiment identifier.
             status: Final status string (default: "finished").
@@ -143,6 +147,11 @@ class ExMan:
             return None
         best_metrics = exp.compute_best_metrics()
         exp.write_summary(status=status, notes=notes, best_metrics=best_metrics)
+        if exp.metadata.attempts:
+            last = exp.metadata.attempts[-1]
+            last.status = status
+            if not last.end_time:
+                last.end_time = datetime.now().isoformat()
         exp.update_status(status)
         return exp
 
@@ -187,6 +196,103 @@ class ExMan:
             if exp.metadata.exp_id == exp_id:
                 return exp
         return None
+
+    def _current_git_state(self) -> tuple[str, bool]:
+        """Capture the current Git repository state.
+
+        Returns:
+            Tuple of (commit hash, dirty flag).
+        """
+        return Experiment._git_info(
+            critical_paths=self.config.get("critical_paths")
+        )
+
+    def resume(
+        self,
+        exp_id: str,
+        description: str = "",
+        tags: List[str] | None = None,
+        config: dict[str, Any] | None = None,
+        data_version: str = "",
+    ) -> tuple[Experiment, bool, int]:
+        """Resume an experiment with context-aware logic.
+
+        Case A (Logic-Clean): If the current workspace matches the parent's
+        Git commit and is clean, the existing experiment is reopened and a
+        new attempt is appended.
+
+        Case B (Logic-Dirty): If the workspace has diverged, a new experiment
+        is created with ``parent_id`` set and checkpoints/configs are copied
+        from the parent.
+
+        Args:
+            exp_id: Full ID of the experiment to resume from.
+            description: Description for a new experiment (Case B).
+            tags: Tags for a new experiment (Case B, defaults to parent's).
+            config: Config for a new experiment (Case B, defaults to parent's).
+            data_version: Data version for a new experiment (Case B).
+
+        Returns:
+            Tuple of (experiment, is_new_experiment, attempt_number).
+
+        Raises:
+            ValueError: If the parent experiment is not found.
+        """
+        parent = self.get(exp_id)
+        if parent is None:
+            raise ValueError(f"Experiment '{exp_id}' not found")
+
+        current_hash, current_dirty = self._current_git_state()
+
+        # Case A: Logic-Clean Resume (Retry)
+        if (
+            current_hash
+            and current_hash == parent.metadata.git_hash
+            and not current_dirty
+        ):
+            attempt_num = len(parent.metadata.attempts) + 1
+            new_attempt = Attempt(
+                sequence=attempt_num,
+                status="running",
+                reason=f"run_{attempt_num}",
+            )
+            parent.metadata.attempts.append(new_attempt)
+            parent.metadata.status = "running"
+            parent.write_metadata()
+            return parent, False, attempt_num
+
+        # Case B: Logic-Dirty Resume (Evolution)
+        child = self.init(
+            description=description or f"inherited from {parent.metadata.exp_id}",
+            tags=tags if tags is not None else list(parent.metadata.tags),
+            config=config if config is not None else dict(parent.config),
+            data_version=data_version,
+        )
+        child.metadata.parent_id = parent.metadata.exp_id
+        child.write_metadata()
+
+        # Symlink checkpoints from parent (fallback to hard copy)
+        parent_ckpt = parent.root / "artifacts" / "checkpoints"
+        child_ckpt = child.root / "artifacts" / "checkpoints"
+        if parent_ckpt.exists():
+            for src in parent_ckpt.iterdir():
+                dest = child_ckpt / src.name
+                try:
+                    os.symlink(src.resolve(), dest)
+                except OSError:
+                    import warnings
+
+                    warnings.warn(
+                        f"Symlink failed for {src.name}, falling back to copy. "
+                        "Enable Developer Mode on Windows for symlink support.",
+                        stacklevel=2,
+                    )
+                    if src.is_dir():
+                        shutil.copytree(src, dest, dirs_exist_ok=True)
+                    else:
+                        shutil.copy2(src, dest)
+
+        return child, True, 1
 
     def _trash_dir(self) -> Path:
         """Return the path to the trash directory, creating it if needed.

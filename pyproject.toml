@@ -32,7 +32,7 @@ line-length = 88
 
 [tool.ruff.lint]
 select = ["F", "E", "W", "I", "B", "UP"]
-per-file-ignores = { "tests/**" = ["E402"] }
+per-file-ignores = { "tests/**" = ["E402"], "src/kaiexman/manager.py" = ["UP006", "UP035"] }
 
 [tool.deptry]
 ignore_notebooks = true
