@@ -336,12 +336,17 @@ def test_resume_case_b_honors_group_parameter(tmp_exman_path, monkeypatch):
     exman = ExMan(root=tmp_exman_path)
     parent = exman.init(description="parent", group="train")
 
+    from kaiexman.models import Attempt
+    parent.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
+    parent.write_metadata()
+    exman.finish(parent.metadata.exp_id, summary="Done.")
+
     monkeypatch.setattr(
         exman, "_current_git_state", lambda: ("different_hash", True)
     )
 
     child, is_new, attempt_num = exman.resume(
-        parent.metadata.exp_id, group="eval"
+        parent.metadata.exp_id, group="eval", description="child"
     )
     assert is_new is True
     assert child.metadata.group == "eval"
@@ -369,7 +374,7 @@ def test_experiment_root_is_mutable():
 # ---------------------------------------------------------------------------
 
 
-def test_resume_blocks_terminal_success(tmp_exman_path, monkeypatch):
+def test_resume_terminal_success_creates_child_case_b(tmp_exman_path, monkeypatch):
     exman = ExMan(root=tmp_exman_path)
     parent = exman.init(description="parent", group="train")
     parent_hash = parent.metadata.git_hash
@@ -386,11 +391,13 @@ def test_resume_blocks_terminal_success(tmp_exman_path, monkeypatch):
         exman, "_current_git_state", lambda: (parent_hash, False)
     )
 
-    with pytest.raises(LockedExperimentError, match="sealed"):
-        exman.resume(parent.metadata.exp_id)
+    child, is_new, attempt_num = exman.resume(parent.metadata.exp_id, description="child")
+    assert is_new is True
+    assert attempt_num == 1
+    assert child.metadata.parent_id == parent.metadata.exp_id
 
 
-def test_resume_blocks_terminal_failed(tmp_exman_path, monkeypatch):
+def test_resume_terminal_failed_creates_child_case_b(tmp_exman_path, monkeypatch):
     exman = ExMan(root=tmp_exman_path)
     parent = exman.init(description="parent", group="train")
     parent_hash = parent.metadata.git_hash
@@ -407,8 +414,10 @@ def test_resume_blocks_terminal_failed(tmp_exman_path, monkeypatch):
         exman, "_current_git_state", lambda: (parent_hash, False)
     )
 
-    with pytest.raises(LockedExperimentError, match="sealed"):
-        exman.resume(parent.metadata.exp_id)
+    child, is_new, attempt_num = exman.resume(parent.metadata.exp_id, description="child")
+    assert is_new is True
+    assert attempt_num == 1
+    assert child.metadata.parent_id == parent.metadata.exp_id
 
 
 def test_resume_allows_non_terminal(tmp_exman_path, monkeypatch):
@@ -539,8 +548,6 @@ def test_abort_command_sets_aborted_status(tmp_exman_path):
             "--path",
             tmp_exman_path,
             "abort",
-            "--summary",
-            "Stopped early.",
             exp.metadata.exp_id,
         ],
     )
@@ -572,8 +579,6 @@ def test_abort_command_blocks_no_attempts(tmp_exman_path):
             "--path",
             tmp_exman_path,
             "abort",
-            "--summary",
-            "Stopped early.",
             exp.metadata.exp_id,
         ],
     )
@@ -603,8 +608,6 @@ def test_abort_command_blocks_already_locked(tmp_exman_path):
             "--path",
             tmp_exman_path,
             "abort",
-            "--summary",
-            "Stopped early.",
             exp.metadata.exp_id,
         ],
     )

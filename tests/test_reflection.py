@@ -89,6 +89,11 @@ def test_resume_cli_rejects_missing_description(tmp_exman_path, monkeypatch):
     exman = ExMan(root=tmp_exman_path)
     parent = exman.init(description="parent")
 
+    from kaiexman.models import Attempt
+    parent.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
+    parent.write_metadata()
+    exman.finish(parent.metadata.exp_id, summary="Done.")
+
     monkeypatch.setattr(
         exman, "_current_git_state", lambda: ("different_hash", True)
     )
@@ -116,6 +121,11 @@ def test_resume_cli_fork_does_not_inherit_description(
 ):
     exman = ExMan(root=tmp_exman_path)
     parent = exman.init(description="parent desc", tags=["baseline"])
+
+    from kaiexman.models import Attempt
+    parent.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
+    parent.write_metadata()
+    exman.finish(parent.metadata.exp_id, summary="Done.")
 
     monkeypatch.setattr(
         exman, "_current_git_state", lambda: ("different_hash", True)
@@ -203,11 +213,11 @@ def test_finish_cli_saves_summary_to_metadata(tmp_exman_path):
 
 
 # ---------------------------------------------------------------------------
-# abort: summary is mandatory
+# abort: no summary required (design decision D4)
 # ---------------------------------------------------------------------------
 
 
-def test_abort_cli_rejects_missing_summary(tmp_exman_path):
+def test_abort_cli_succeeds_without_summary(tmp_exman_path):
     exman = ExMan(root=tmp_exman_path)
     exp = exman.init(description="abort test")
     from kaiexman.models import Attempt
@@ -220,11 +230,16 @@ def test_abort_cli_rejects_missing_summary(tmp_exman_path):
         cli,
         ["--path", tmp_exman_path, "abort", exp.metadata.exp_id],
     )
-    assert result.exit_code != 0
-    assert "summary is required" in result.output.lower()
+    assert result.exit_code == 0
+    assert "aborted" in result.output.lower()
+
+    meta_path = Path(tmp_exman_path) / "default" / exp.root.name / "metadata.json"
+    raw = json.loads(meta_path.read_text())
+    assert raw["status"] == "aborted"
+    assert raw["locked"] is True
 
 
-def test_abort_cli_saves_summary_to_metadata(tmp_exman_path):
+def test_abort_cli_sets_default_summary(tmp_exman_path):
     exman = ExMan(root=tmp_exman_path)
     exp = exman.init(description="abort test")
     from kaiexman.models import Attempt
@@ -235,20 +250,13 @@ def test_abort_cli_saves_summary_to_metadata(tmp_exman_path):
     runner = CliRunner()
     result = runner.invoke(
         cli,
-        [
-            "--path",
-            tmp_exman_path,
-            "abort",
-            "--summary",
-            "Stopped due to OOM.",
-            exp.metadata.exp_id,
-        ],
+        ["--path", tmp_exman_path, "abort", exp.metadata.exp_id],
     )
     assert result.exit_code == 0
 
     meta_path = Path(tmp_exman_path) / "default" / exp.root.name / "metadata.json"
     raw = json.loads(meta_path.read_text())
-    assert raw["summary"] == "Stopped due to OOM."
+    assert raw["summary"] == "Aborted by user."
 
 
 # ---------------------------------------------------------------------------
@@ -300,6 +308,11 @@ def test_list_oneline_shows_description(tmp_exman_path):
 def test_list_tree_truncates_long_description(tmp_exman_path, monkeypatch):
     exman = ExMan(root=tmp_exman_path)
     parent = exman.init(description="A" * 50)
+
+    from kaiexman.models import Attempt
+    parent.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
+    parent.write_metadata()
+    exman.finish(parent.metadata.exp_id, summary="Done.")
 
     monkeypatch.setattr(
         exman, "_current_git_state", lambda: ("different_hash", True)
