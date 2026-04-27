@@ -30,6 +30,8 @@ _DEFAULT_CRITICAL_PATHS = [
     "setup.cfg",
 ]
 
+_TERMINAL_STATUSES = {"success", "failed", "aborted"}
+
 
 def validate_tag(tag: str) -> None:
     """Validate a tag name against the allowed format.
@@ -202,7 +204,21 @@ class Experiment:
 
         Args:
             status: New status string (e.g., "finished", "failed").
+
+        Raises:
+            LockedExperimentError: If the experiment has already been sealed.
+            RuntimeError: If attempting to set a terminal status with no attempts.
         """
+        if self.metadata.locked:
+            raise LockedExperimentError(
+                f"Experiment {self.metadata.exp_id} is locked. "
+                "The lab record has been sealed and cannot be modified."
+            )
+        if status in _TERMINAL_STATUSES and not self.metadata.attempts:
+            raise RuntimeError(
+                f"Experiment '{self.metadata.exp_id}' has no attempts. "
+                "Cannot mark as completed without at least one attempt."
+            )
         self.metadata.status = status
         self.write_metadata()
 

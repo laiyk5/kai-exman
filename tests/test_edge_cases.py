@@ -130,6 +130,16 @@ def test_finish_nonexistent_experiment_raises(tmp_exman_path):
         exman.finish(exp_id="does_not_exist")
 
 
+# -- Edge: update_status blocks terminal without attempts ------------------
+
+
+def test_update_status_terminal_without_attempts_raises(tmp_exman_path):
+    exman = ExMan(root=tmp_exman_path)
+    exp = exman.init(description="no attempts")
+    with pytest.raises(RuntimeError, match="no attempts"):
+        exp.update_status("success")
+
+
 # -- Edge: tags with empty entries -----------------------------------------
 
 
