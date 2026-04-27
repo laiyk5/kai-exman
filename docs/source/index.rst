@@ -19,6 +19,9 @@ A lightweight, filesystem-first experiment management toolkit designed for repro
    design/organization
    design/lifecycle
    design/reproducibility
+   design/cli-redesign
+   design/cli-evolution
+   design/multi-parent-inheritance
 
 Indices and tables
 ==================

@@ -10,6 +10,7 @@ Initialize an experiment manager and start tracking::
 
     exman = ExMan()  # Uses ./outputs or EXMAN_PATH env var
 
+    # 1. Create a draft experiment
     exp = exman.init(
         description="Baseline LLaMA3 run",
         tags=["baseline", "llama3"],
@@ -18,18 +19,24 @@ Initialize an experiment manager and start tracking::
         group="train",
     )
 
-    # Log metrics during training
+    # 2. Execute on the experiment
+    exp.run(["python", "train.py"])
+
+    # Or use ExMan directly
+    exman.run(exp.metadata.exp_id, ["python", "train.py"])
+
+    # 3. Log metrics during training
     exp.log_metrics(step=0, values={"loss": 1.2, "acc": 0.5})
     exp.log_metrics(step=1, values={"loss": 0.8, "acc": 0.7})
 
-    # Save artifacts (checkpoints, plots, etc.)
+    # 4. Save artifacts (checkpoints, plots, etc.)
     exp.save_artifact("/tmp/best_model.pt", name="best_model.pt")
 
-    # Retrieve best metrics seen so far
+    # 5. Retrieve best metrics seen so far
     best = exp.compute_best_metrics()
     # {"loss": {"max": 1.2, "min": 0.8}, "acc": {"max": 0.7, "min": 0.5}}
 
-    # Log bad cases for analysis
+    # 6. Log bad cases for analysis
     exp.log_bad_case(
         case_id="img_42",
         input_data={"features": [1.0, 2.0]},
@@ -38,23 +45,34 @@ Initialize an experiment manager and start tracking::
         extra={"confidence": 0.99},
     )
 
-    # Finish the experiment (status auto-determined from last attempt)
-    finished = exman.finish(
-        exp_id=exp.metadata.exp_id,
-        notes="Good convergence.",
-        summary="Reached target accuracy; next step LR sweep."
+    # 7. Finish the experiment (status auto-determined from last attempt)
+    exp.finish(summary="Reached target accuracy; next step LR sweep.")
+
+Inheritance and retry::
+
+    # Retry: append a new attempt to the same running experiment
+    exp.run(["python", "train.py"], reason="retry after OOM")
+
+    # Inherit: create a child from a finished parent
+    child = exman.init(
+        description="Tune learning rate",
+        parent_ids=[exp.metadata.exp_id],
+        group="train",
+    )
+    child.run(["python", "train.py", "--lr", "0.01"])
+    child.finish(summary="Best LR is 0.01.")
+
+    # Multi-parent inheritance
+    ensemble = exman.init(
+        description="Ensemble eval",
+        parent_ids=[model_a.metadata.exp_id, model_b.metadata.exp_id],
+        group="eval",
     )
 
-Resume and lineage::
-
-    # Case A: same commit, clean workspace -> append attempt to existing experiment
-    exp, is_new, attempt_num = exman.resume(exp.metadata.exp_id)
-
-    # Case B: dirty workspace or different commit -> new experiment with parent link
-    # (automatic when git state diverges)
+Organization::
 
     # Move an experiment to a different group
-    moved = exman.move(exp.metadata.exp_id, "eval")
+    exman.move(exp.metadata.exp_id, "eval")
 
     # List all experiments
     experiments = exman.list()
@@ -75,18 +93,27 @@ Global options::
 
     kai-exman --path ./outputs --strict <command>
 
-Initialize a new experiment (``--description`` is mandatory)::
+Create a draft experiment (``--description`` is mandatory in non-TTY)::
 
-    kai-exman init --description "Baseline run" --tags "baseline,llama3" --config config.yaml --group train
+    kai-exman init -d "Baseline run" -t "baseline,llama3" -c config.yaml --group train
 
-Run a command inside an experiment context (``--description`` is mandatory)::
+Create a child from finished parent(s)::
 
-    # Fresh experiment
-    kai-exman run --description "training run" -- python train.py
+    kai-exman init -d "Tune LR after refactor" --inherit <exp_id> --group train
 
-    # Inherit from a finished experiment (Case B)
-    # You must describe the fork; parent's description is not inherited.
-    kai-exman run --inherit <exp_id> --description "tune LR after refactor" -- python train.py
+    # Multi-parent inheritance
+    kai-exman init -d "Ensemble eval" --inherit <id_a> --inherit <id_b> --group eval
+
+Execute a command on an existing experiment::
+
+    # Run on draft (creates attempt 1)
+    kai-exman run <exp_id> -- python train.py
+
+    # Retry on running experiment (appends attempt N)
+    kai-exman run <exp_id> --reason "retry after OOM" -- python train.py
+
+    # Uses default experiment if ID omitted
+    kai-exman run -- python train.py
 
 List experiments::
 
@@ -111,8 +138,12 @@ List experiments::
 
 Show experiment details::
 
-    kai-exman show <exp_id>
-    kai-exman show --full-id <exp_id>
+    kai-exman status <exp_id>
+    kai-exman status --full-id <exp_id>
+
+Set the default experiment::
+
+    kai-exman use <exp_id>
 
 Move an experiment to a different group::
 
@@ -125,11 +156,22 @@ Tag or untag an experiment::
 
 List all tags::
 
-    kai-exman tags
+    kai-exman tag -l
+
+Group management::
+
+    # List all groups
+    kai-exman group -l
+
+    # Suggest group assignments
+    kai-exman group
+
+    # Apply suggested moves
+    kai-exman group --apply
 
 Finish an experiment and generate summary.md (``--summary`` is mandatory)::
 
-    kai-exman finish <exp_id> --summary "Best run so far" --notes "Observed 2% gain"
+    kai-exman finish <exp_id> -s "Best run so far" -n "Observed 2% gain"
 
 Status is auto-determined from the last attempt's exit code:
 
@@ -137,9 +179,9 @@ Status is auto-determined from the last attempt's exit code:
 - Non-zero -> ``failed``
 - ``None`` (stopped) -> ``aborted``
 
-Abort an experiment manually (``--summary`` is mandatory)::
+Abort an experiment manually (no summary required)::
 
-    kai-exman abort <exp_id> --summary "Stopped early due to NaN"
+    kai-exman abort <exp_id>
 
 Use ``abort`` when an experiment was stopped manually or did not complete
 normally. It marks the last attempt as aborted and seals the record.
@@ -148,7 +190,3 @@ Remove an experiment (moved to trash for safety)::
 
     kai-exman rm <exp_id>
     kai-exman rm --clear-trash  # permanently empty trash
-
-Suggest group assignments based on config similarity::
-
-    kai-exman suggest-groups
