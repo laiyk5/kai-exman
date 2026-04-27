@@ -89,18 +89,25 @@ def test_resume_logic_dirty_creates_new_experiment(tmp_exman_path, monkeypatch):
     exman = ExMan(root=tmp_exman_path)
     parent = exman.init(description="parent")
 
+    from kaiexman.models import Attempt
+    parent.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
+    parent.write_metadata()
+    exman.finish(parent.metadata.exp_id, summary="Done.")
+
     # Simulate dirty workspace
     monkeypatch.setattr(
         exman, "_current_git_state", lambda: ("different_hash", True)
     )
 
-    child, is_new, attempt_num = exman.resume(parent.metadata.exp_id)
+    child, is_new, attempt_num = exman.resume(
+        parent.metadata.exp_id, description="child"
+    )
 
     assert is_new is True
     assert attempt_num == 1
     assert child.metadata.exp_id != parent.metadata.exp_id
     assert child.metadata.parent_id == parent.metadata.exp_id
-    assert child.metadata.description == ""
+    assert child.metadata.description == "child"
 
 
 def test_resume_logic_dirty_copies_checkpoints(tmp_exman_path, monkeypatch):
@@ -109,11 +116,16 @@ def test_resume_logic_dirty_copies_checkpoints(tmp_exman_path, monkeypatch):
     ckpt = parent.root / "artifacts" / "checkpoints" / "best.pt"
     ckpt.write_text("checkpoint data")
 
+    from kaiexman.models import Attempt
+    parent.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
+    parent.write_metadata()
+    exman.finish(parent.metadata.exp_id, summary="Done.")
+
     monkeypatch.setattr(
         exman, "_current_git_state", lambda: ("different_hash", True)
     )
 
-    child, _is_new, _attempt = exman.resume(parent.metadata.exp_id)
+    child, _is_new, _attempt = exman.resume(parent.metadata.exp_id, description="child")
 
     copied = child.root / "artifacts" / "checkpoints" / "best.pt"
     assert copied.exists()
@@ -133,11 +145,16 @@ def test_resume_preserves_parent_tags_in_case_b(tmp_exman_path, monkeypatch):
     exman = ExMan(root=tmp_exman_path)
     parent = exman.init(description="parent", tags=["baseline", "v1"])
 
+    from kaiexman.models import Attempt
+    parent.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
+    parent.write_metadata()
+    exman.finish(parent.metadata.exp_id, summary="Done.")
+
     monkeypatch.setattr(
         exman, "_current_git_state", lambda: ("different_hash", True)
     )
 
-    child, _is_new, _attempt = exman.resume(parent.metadata.exp_id)
+    child, _is_new, _attempt = exman.resume(parent.metadata.exp_id, description="child")
 
     assert child.metadata.tags == ["baseline", "v1"]
 
@@ -146,12 +163,17 @@ def test_resume_allows_custom_tags_in_case_b(tmp_exman_path, monkeypatch):
     exman = ExMan(root=tmp_exman_path)
     parent = exman.init(description="parent", tags=["baseline"])
 
+    from kaiexman.models import Attempt
+    parent.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
+    parent.write_metadata()
+    exman.finish(parent.metadata.exp_id, summary="Done.")
+
     monkeypatch.setattr(
         exman, "_current_git_state", lambda: ("different_hash", True)
     )
 
     child, _is_new, _attempt = exman.resume(
-        parent.metadata.exp_id, tags=["evolved"]
+        parent.metadata.exp_id, tags=["evolved"], description="child"
     )
 
     assert child.metadata.tags == ["evolved"]
@@ -306,10 +328,15 @@ def test_show_displays_parent_id(tmp_exman_path, monkeypatch):
     exman = ExMan(root=tmp_exman_path)
     parent = exman.init(description="parent")
 
+    from kaiexman.models import Attempt
+    parent.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
+    parent.write_metadata()
+    exman.finish(parent.metadata.exp_id, summary="Done.")
+
     monkeypatch.setattr(
         exman, "_current_git_state", lambda: ("different_hash", True)
     )
-    child, _is_new, _attempt = exman.resume(parent.metadata.exp_id)
+    child, _is_new, _attempt = exman.resume(parent.metadata.exp_id, description="child")
 
     runner = CliRunner()
     result = runner.invoke(
@@ -328,10 +355,15 @@ def test_list_shows_inheritance_indicator(tmp_exman_path, monkeypatch):
     exman = ExMan(root=tmp_exman_path)
     parent = exman.init(description="parent")
 
+    from kaiexman.models import Attempt
+    parent.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
+    parent.write_metadata()
+    exman.finish(parent.metadata.exp_id, summary="Done.")
+
     monkeypatch.setattr(
         exman, "_current_git_state", lambda: ("different_hash", True)
     )
-    child, _is_new, _attempt = exman.resume(parent.metadata.exp_id)
+    child, _is_new, _attempt = exman.resume(parent.metadata.exp_id, description="child")
 
     runner = CliRunner()
     result = runner.invoke(

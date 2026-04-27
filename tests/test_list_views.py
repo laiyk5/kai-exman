@@ -148,10 +148,19 @@ def test_log_view_shows_parent_reference(tmp_exman_path, monkeypatch):
     exman = ExMan(root=tmp_exman_path)
     parent = exman.init(description="parent")
 
+    # Parent must be finished before it can be inherited (Case B).
+    from kaiexman.models import Attempt
+
+    parent.metadata.attempts.append(
+        Attempt(sequence=1, status="running", exit_code=0)
+    )
+    parent.write_metadata()
+    exman.finish(parent.metadata.exp_id, summary="Done.")
+
     monkeypatch.setattr(
         exman, "_current_git_state", lambda: ("different_hash", True)
     )
-    exman.resume(parent.metadata.exp_id)
+    exman.resume(parent.metadata.exp_id, description="child")
 
     runner = CliRunner()
     result = runner.invoke(cli.cli, ["--path", tmp_exman_path, "list"])
@@ -183,10 +192,15 @@ def test_oneline_shows_inherited_experiments(tmp_exman_path, monkeypatch):
     exman = ExMan(root=tmp_exman_path)
     parent = exman.init(description="parent")
 
+    from kaiexman.models import Attempt
+    parent.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
+    parent.write_metadata()
+    exman.finish(parent.metadata.exp_id, summary="Done.")
+
     monkeypatch.setattr(
         exman, "_current_git_state", lambda: ("different_hash", True)
     )
-    child, _is_new, _attempt = exman.resume(parent.metadata.exp_id)
+    child, _is_new, _attempt = exman.resume(parent.metadata.exp_id, description="child")
 
     runner = CliRunner()
     result = runner.invoke(
@@ -226,23 +240,27 @@ def test_tree_shows_lineage_topology(tmp_exman_path, monkeypatch):
     exman = ExMan(root=tmp_exman_path)
     parent = exman.init(description="parent")
 
+    from kaiexman.models import Attempt
+    parent.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
+    parent.write_metadata()
+    exman.finish(parent.metadata.exp_id, summary="Done.")
+
     monkeypatch.setattr(
         exman, "_current_git_state", lambda: ("different_hash", True)
     )
-    child, _is_new, _attempt = exman.resume(parent.metadata.exp_id)
+    child, _is_new, _attempt = exman.resume(parent.metadata.exp_id, description="child")
 
     runner = CliRunner()
     result = runner.invoke(
         cli.cli, ["--path", tmp_exman_path, "list", "--tree"]
     )
     assert result.exit_code == 0
-    # Root marker (draft parent has no attempts)
-    assert "○" in result.output
+    # Root marker (finished parent)
+    assert "*" in result.output
     # Child connector
     assert "`-- o" in result.output or "|-- o" in result.output
     assert "parent" in result.output
-    # Child description is empty (no longer auto-inherited)
-    assert "(no description)" in result.output
+    assert "child" in result.output
 
 
 def test_tree_sorts_only_roots(tmp_exman_path, monkeypatch):
@@ -251,10 +269,15 @@ def test_tree_sorts_only_roots(tmp_exman_path, monkeypatch):
     root_b = exman.init(description="root_b")
     exman.init(description="root_a")
 
+    from kaiexman.models import Attempt
+    root_b.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
+    root_b.write_metadata()
+    exman.finish(root_b.metadata.exp_id, summary="Done.")
+
     monkeypatch.setattr(
         exman, "_current_git_state", lambda: ("different_hash", True)
     )
-    child, _is_new, _attempt = exman.resume(root_b.metadata.exp_id)
+    child, _is_new, _attempt = exman.resume(root_b.metadata.exp_id, description="child")
 
     runner = CliRunner()
     result = runner.invoke(

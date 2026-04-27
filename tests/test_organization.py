@@ -391,7 +391,9 @@ def test_resume_terminal_success_creates_child_case_b(tmp_exman_path, monkeypatc
         exman, "_current_git_state", lambda: (parent_hash, False)
     )
 
-    child, is_new, attempt_num = exman.resume(parent.metadata.exp_id, description="child")
+    child, is_new, attempt_num = exman.resume(
+        parent.metadata.exp_id, description="child"
+    )
     assert is_new is True
     assert attempt_num == 1
     assert child.metadata.parent_id == parent.metadata.exp_id
@@ -414,7 +416,9 @@ def test_resume_terminal_failed_creates_child_case_b(tmp_exman_path, monkeypatch
         exman, "_current_git_state", lambda: (parent_hash, False)
     )
 
-    child, is_new, attempt_num = exman.resume(parent.metadata.exp_id, description="child")
+    child, is_new, attempt_num = exman.resume(
+        parent.metadata.exp_id, description="child"
+    )
     assert is_new is True
     assert attempt_num == 1
     assert child.metadata.parent_id == parent.metadata.exp_id

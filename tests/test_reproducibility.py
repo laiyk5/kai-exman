@@ -3,13 +3,10 @@
 Covers: command recording, git diff patch, dataset hash, abort summary removal.
 """
 
-import json
 import os
 import subprocess
 import sys
 from pathlib import Path
-
-import pytest
 
 src = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(src))
@@ -19,7 +16,6 @@ from click.testing import CliRunner
 from kaiexman import ExMan
 from kaiexman.cli import cli
 from kaiexman.experiment import Experiment
-
 
 # ---------------------------------------------------------------------------
 # Data Hash
@@ -230,7 +226,6 @@ def test_patch_file_absent_when_clean(tmp_exman_path, monkeypatch):
 
 def test_patch_written_on_init_when_dirty(tmp_exman_path):
     """If init detects a dirty repo, code.patch should be written."""
-    import os
 
     # Create a fake git repo with a critical path file
     repo = Path(tmp_exman_path) / "repo"

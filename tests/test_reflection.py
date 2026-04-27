@@ -105,7 +105,7 @@ def test_resume_cli_rejects_missing_description(tmp_exman_path, monkeypatch):
             "--path",
             tmp_exman_path,
             "run",
-            "--resume",
+            "--inherit",
             parent.metadata.exp_id,
             "--",
             "echo",
@@ -138,7 +138,7 @@ def test_resume_cli_fork_does_not_inherit_description(
             "--path",
             tmp_exman_path,
             "run",
-            "--resume",
+            "--inherit",
             parent.metadata.exp_id,
             "--description",
             "Fork with new intent",
@@ -386,63 +386,6 @@ def test_require_text_empty_after_comment_stripping_raises(monkeypatch):
 
     with pytest.raises(click.ClickException, match="error msg"):
         _require_text("", "prompt", "error msg")
-
-
-# ---------------------------------------------------------------------------
-# auto-resume detection
-# ---------------------------------------------------------------------------
-
-
-def test_run_auto_detects_resume_from_first_arg(tmp_exman_path, monkeypatch):
-    """If the first positional arg matches an experiment ID, treat as --resume."""
-    exman = ExMan(root=tmp_exman_path)
-    parent = exman.init(description="parent")
-
-    # Patch at class level because run() creates its own ExMan instance.
-    monkeypatch.setattr(
-        ExMan, "_current_git_state", lambda _self: (parent.metadata.git_hash, False)
-    )
-
-    runner = CliRunner()
-    result = runner.invoke(
-        cli,
-        [
-            "--path",
-            tmp_exman_path,
-            "run",
-            "-d",
-            "resume test",
-            parent.metadata.exp_id[:8],
-            "--",
-            "echo",
-            "hello",
-        ],
-    )
-    assert result.exit_code == 0
-    # The output should mention resuming, not "Running experiment"
-    assert "Resuming experiment" in result.output or "attempt" in result.output.lower()
-
-
-def test_run_auto_detect_skips_ambiguous_prefix(tmp_exman_path):
-    """If the prefix matches multiple experiments, do NOT auto-detect."""
-    exman = ExMan(root=tmp_exman_path)
-    exman.init(description="exp1")
-    exman.init(description="exp2")
-
-    runner = CliRunner()
-    result = runner.invoke(
-        cli,
-        [
-            "--path",
-            tmp_exman_path,
-            "run",
-            "-d",
-            "test",
-            "echo",
-            "hello",
-        ],
-    )
-    assert result.exit_code == 0
 
 
 # ---------------------------------------------------------------------------
