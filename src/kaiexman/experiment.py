@@ -277,9 +277,7 @@ class Experiment:
                         patch_content += "+\x00<binary>\n"
 
             if patch_content.strip():
-                self._diff_patch_path.write_text(
-                    patch_content, encoding="utf-8"
-                )
+                self._diff_patch_path.write_text(patch_content, encoding="utf-8")
         except (subprocess.CalledProcessError, FileNotFoundError):
             pass
 
@@ -581,8 +579,7 @@ class Experiment:
         exman = self._exman()
         if exman is None:
             raise RuntimeError(
-                "Experiment has no manager reference. "
-                "Use ExMan.run() directly."
+                "Experiment has no manager reference. Use ExMan.run() directly."
             )
         return exman.run(
             self.metadata.exp_id, command, data_path=data_path, reason=reason
@@ -606,8 +603,7 @@ class Experiment:
         exman = self._exman()
         if exman is None:
             raise RuntimeError(
-                "Experiment has no manager reference. "
-                "Use ExMan.finish() directly."
+                "Experiment has no manager reference. Use ExMan.finish() directly."
             )
         return exman.finish(self.metadata.exp_id, notes=notes, summary=summary)
 
@@ -628,7 +624,6 @@ class Experiment:
         exman = self._exman()
         if exman is None:
             raise RuntimeError(
-                "Experiment has no manager reference. "
-                "Use ExMan.abort() directly."
+                "Experiment has no manager reference. Use ExMan.abort() directly."
             )
         return exman.abort(self.metadata.exp_id, notes=notes)

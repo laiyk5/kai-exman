@@ -158,9 +158,7 @@ def _use_pager(ctx: click.Context) -> bool:
     return sys.stdout.isatty()
 
 
-def _echo_lines(
-    ctx: click.Context, lines: list[str], use_pager: bool = False
-) -> None:
+def _echo_lines(ctx: click.Context, lines: list[str], use_pager: bool = False) -> None:
     """Output lines with Rich colors in TTY, plain text otherwise.
 
     Args:
@@ -424,9 +422,7 @@ def init(
     _echo_lines(ctx, lines)
 
 
-def _resolve_run_args(
-    exman: ExMan, args: tuple[str, ...]
-) -> tuple[str, list[str]]:
+def _resolve_run_args(exman: ExMan, args: tuple[str, ...]) -> tuple[str, list[str]]:
     """Resolve experiment ID and command from run arguments.
 
     If the first argument matches exactly one experiment prefix, it is
@@ -606,9 +602,7 @@ def list_cmd(
             score = None
             if sort_by in best:
                 score = (
-                    best[sort_by]["max"]
-                    if order == "desc"
-                    else best[sort_by]["min"]
+                    best[sort_by]["max"] if order == "desc" else best[sort_by]["min"]
                 )
             scored.append((exp, best, score))
             if score is not None:
@@ -1005,7 +999,10 @@ def _build_tree_lines(
             child_is_last = i == len(children) - 1
             child_prefix = prefix + ("    " if is_last else "|   ")
             _render_node(
-                child, child_prefix, child_is_last, is_root=False,
+                child,
+                child_prefix,
+                child_is_last,
+                is_root=False,
                 path_ids=path_ids | {exp.metadata.exp_id},
             )
 
@@ -1041,8 +1038,7 @@ def finish(ctx: click.Context, exp_id: str | None, summary: str, notes: str) -> 
         summary,
         prompt="Write a conclusion reflecting on this experiment...",
         empty_msg=(
-            "Experiment summary is required."
-            " Use --summary or run interactively."
+            "Experiment summary is required. Use --summary or run interactively."
         ),
         template=_CONCLUSION_TEMPLATE,
     )
@@ -1066,11 +1062,14 @@ def finish(ctx: click.Context, exp_id: str | None, summary: str, notes: str) -> 
     status = exp.metadata.status
     status_color = _STATUS_COLORS.get(status, "white")
 
-    _echo_lines(ctx, [
-        f"[bold {status_color}]Experiment {short_id} {status}.[/bold {status_color}]",
-        f"Status: {status}",
-        f"Summary written to: {exp.root / 'summary.md'}",
-    ])
+    _echo_lines(
+        ctx,
+        [
+            f"[bold {status_color}]Experiment {short_id} {status}.[/bold {status_color}]",
+            f"Status: {status}",
+            f"Summary written to: {exp.root / 'summary.md'}",
+        ],
+    )
 
 
 @cli.command()
@@ -1097,10 +1096,13 @@ def abort(ctx: click.Context, exp_id: str | None, notes: str) -> None:
 
     short_len = cfg_mgr.get("short_id_length", 8)
     short_id = finished.metadata.exp_id[:short_len]
-    _echo_lines(ctx, [
-        f"[bold dim]Experiment {short_id} aborted.[/bold dim]",
-        f"Summary written to: {finished.root / 'summary.md'}",
-    ])
+    _echo_lines(
+        ctx,
+        [
+            f"[bold dim]Experiment {short_id} aborted.[/bold dim]",
+            f"Summary written to: {finished.root / 'summary.md'}",
+        ],
+    )
 
 
 @cli.command(name="status")
@@ -1157,22 +1159,16 @@ def status(ctx: click.Context, exp_id: str | None, full_id: bool) -> None:
 
     if best_metrics:
         lines.append("[bold magenta]Best Metrics:[/bold magenta]")
-        lines.append(
-            f"{'Metric':<20} {'Best (Max)':>12} {'Worst (Min)':>12}"
-        )
+        lines.append(f"{'Metric':<20} {'Best (Max)':>12} {'Worst (Min)':>12}")
         for key, vals in best_metrics.items():
-            lines.append(
-                f"{key:<20} {vals['max']:>12.6f} {vals['min']:>12.6f}"
-            )
+            lines.append(f"{key:<20} {vals['max']:>12.6f} {vals['min']:>12.6f}")
     else:
         lines.append("[dim]Best Metrics: No metrics recorded.[/dim]")
 
     if exp.metadata.attempts:
         lines.append("")
         lines.append("[bold yellow]Attempts:[/bold yellow]")
-        lines.append(
-            f"{'Run':<10} {'Start':<20} {'End':<20} {'Status':<12} Command"
-        )
+        lines.append(f"{'Run':<10} {'Start':<20} {'End':<20} {'Status':<12} Command")
         for att in exp.metadata.attempts:
             name = att.reason or f"run_{att.sequence}"
             start = att.start_time[:19] if att.start_time else "-"
@@ -1180,9 +1176,7 @@ def status(ctx: click.Context, exp_id: str | None, full_id: bool) -> None:
             cmd = " ".join(att.command) if att.command else "-"
             if len(cmd) > 40:
                 cmd = cmd[:37] + "..."
-            lines.append(
-                f"{name:<10} {start:<20} {end:<20} {att.status:<12} {cmd}"
-            )
+            lines.append(f"{name:<10} {start:<20} {end:<20} {att.status:<12} {cmd}")
 
     _echo_lines(ctx, lines)
 
@@ -1220,9 +1214,7 @@ def tag_cmd(
         exp_id = args[0]
         tag_name = args[1]
     else:
-        raise click.ClickException(
-            "tag requires 1 or 2 arguments: [EXP_ID] TAG_NAME"
-        )
+        raise click.ClickException("tag requires 1 or 2 arguments: [EXP_ID] TAG_NAME")
 
     _validate_tag(tag_name)
     cfg_mgr: ConfigManager = ctx.obj["config"]
@@ -1277,9 +1269,7 @@ def _list_tags(ctx: click.Context, group: str | None) -> None:
     for tag in sorted(tag_counts.keys()):
         count = tag_counts[tag]
         if group is None:
-            group_parts = [
-                f"{g}({c})" for g, c in sorted(tag_groups[tag].items())
-            ]
+            group_parts = [f"{g}({c})" for g, c in sorted(tag_groups[tag].items())]
             lines.append(f"{tag:<20} {count:>5}  {', '.join(group_parts)}")
         else:
             lines.append(f"{tag:<20} {count:>5}")
@@ -1395,15 +1385,13 @@ def group_cmd(
 
     lines = []
     lines.append(
-        f"[bold]{'Experiment':<12} {'Current':<12} {'Suggested':<12} "
-        f"Similarity[/bold]"
+        f"[bold]{'Experiment':<12} {'Current':<12} {'Suggested':<12} Similarity[/bold]"
     )
     short_len = cfg_mgr.get("short_id_length", 8)
     for exp, suggested_group, score in suggestions:
         short_id = exp.metadata.exp_id[:short_len]
         lines.append(
-            f"{short_id:<12} {exp.metadata.group:<12} {suggested_group:<12} "
-            f"{score:.2f}"
+            f"{short_id:<12} {exp.metadata.group:<12} {suggested_group:<12} {score:.2f}"
         )
 
     _echo_lines(ctx, lines)
@@ -1484,9 +1472,7 @@ def rm(
         return
 
     if exp_id is None:
-        raise click.ClickException(
-            "EXP_ID is required unless --clear-trash is used."
-        )
+        raise click.ClickException("EXP_ID is required unless --clear-trash is used.")
 
     resolved_id = _resolve_exp_id(exman, exp_id)
     exp = exman.get(resolved_id)
@@ -1497,14 +1483,10 @@ def rm(
 
     if mark_deletable:
         if dry_run:
-            click.echo(
-                f"Would mark experiment {resolved_id[:short_len]} as deletable."
-            )
+            click.echo(f"Would mark experiment {resolved_id[:short_len]} as deletable.")
             return
         exman.mark_deletable(resolved_id)
-        click.echo(
-            f"Marked experiment {resolved_id[:short_len]} as deletable."
-        )
+        click.echo(f"Marked experiment {resolved_id[:short_len]} as deletable.")
         return
 
     if not dry_run and not yes:
@@ -1517,8 +1499,7 @@ def rm(
                 return
         else:
             raise click.ClickException(
-                "Non-TTY operation requires --yes to remove. "
-                "Use --dry-run to preview."
+                "Non-TTY operation requires --yes to remove. Use --dry-run to preview."
             )
 
     try:

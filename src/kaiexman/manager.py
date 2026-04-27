@@ -281,9 +281,7 @@ class ExMan:
                 with config_path.open("r", encoding="utf-8") as f:
                     config = yaml.safe_load(f)
             experiments.append(
-                Experiment(
-                    root=path, metadata=meta, config=config, exman=self
-                )
+                Experiment(root=path, metadata=meta, config=config, exman=self)
             )
         return experiments
 
@@ -525,9 +523,7 @@ class ExMan:
             raise ValueError(f"Experiment '{exp_id}' not found")
 
         if exp.metadata.status == "aborted":
-            raise ValueError(
-                f"Experiment '{exp_id}' was aborted and cannot be run."
-            )
+            raise ValueError(f"Experiment '{exp_id}' was aborted and cannot be run.")
 
         is_draft = not exp.metadata.attempts
         is_sealed = exp.metadata.locked or exp.metadata.status in _TERMINAL_STATUSES
@@ -725,9 +721,7 @@ class ExMan:
         if exp is None:
             raise ValueError(f"Experiment '{exp_id}' not found")
         if not exp.metadata.attempts:
-            raise RuntimeError(
-                f"Experiment '{exp_id}' has no attempts. Cannot abort."
-            )
+            raise RuntimeError(f"Experiment '{exp_id}' has no attempts. Cannot abort.")
         if exp.metadata.locked or exp.metadata.status in _TERMINAL_STATUSES:
             raise LockedExperimentError(
                 f"Experiment {exp_id} is already sealed. "
@@ -739,9 +733,7 @@ class ExMan:
         last.status = "aborted"
         exp.write_metadata()
 
-        return self.finish(
-            exp_id=exp_id, notes=notes, summary="Aborted by user."
-        )
+        return self.finish(exp_id=exp_id, notes=notes, summary="Aborted by user.")
 
     def list(self, group: str | None = None) -> List[Experiment]:
         """List all experiments under the root directory.
@@ -815,9 +807,7 @@ class ExMan:
         Returns:
             Tuple of (commit hash, dirty flag).
         """
-        return Experiment._git_info(
-            critical_paths=self.config.get("critical_paths")
-        )
+        return Experiment._git_info(critical_paths=self.config.get("critical_paths"))
 
     def resume(
         self,
@@ -1171,14 +1161,9 @@ class ExMan:
 
         # Protect experiments that have children — this is a core rule,
         # enforced regardless of dry_run.
-        children = [
-            e for e in self.list()
-            if exp_id in e.metadata.parent_ids
-        ]
+        children = [e for e in self.list() if exp_id in e.metadata.parent_ids]
         if children:
-            child_ids = ", ".join(
-                c.metadata.exp_id[:8] for c in children
-            )
+            child_ids = ", ".join(c.metadata.exp_id[:8] for c in children)
             raise ValueError(
                 f"Cannot remove experiment '{exp_id}' because it has "
                 f"child experiment(s): {child_ids}. "
@@ -1209,8 +1194,7 @@ class ExMan:
                 parent = self.get(parent_id)
                 if parent and parent.metadata.deletable:
                     remaining_children = [
-                        e for e in self.list()
-                        if parent_id in e.metadata.parent_ids
+                        e for e in self.list() if parent_id in e.metadata.parent_ids
                     ]
                     if not remaining_children:
                         parent_exp, parent_purged = self.remove(
@@ -1218,8 +1202,7 @@ class ExMan:
                         )
                         if parent_exp is not None:
                             print(
-                                f"[kai-exman] Cascade: removed parent "
-                                f"{parent_id[:8]}"
+                                f"[kai-exman] Cascade: removed parent {parent_id[:8]}"
                             )
                         purged.extend(parent_purged)
 
