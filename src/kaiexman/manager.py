@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from kaiexman.config import ConfigManager
 from kaiexman.experiment import Experiment, validate_tag
 from kaiexman.models import Metadata
 
@@ -22,17 +23,25 @@ class ExMan:
 
     Attributes:
         root: Resolved Path to the experiments root directory.
+        config: ConfigManager instance holding merged settings.
     """
 
-    def __init__(self, root: str | None = None):
+    def __init__(
+        self,
+        root: str | None = None,
+        config: ConfigManager | None = None,
+    ):
         """Initialize the experiment manager.
 
         Args:
             root: Path to the experiments directory. Defaults to
                 the EXMAN_PATH environment variable or "./outputs".
+            config: Optional ConfigManager. A new one is created with
+                defaults if not provided.
         """
         self.root = Path(root or os.environ.get("EXMAN_PATH", "./outputs")).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
+        self.config = config if config is not None else ConfigManager()
 
     def _next_id(self) -> str:
         """Generate the next unique experiment identifier.
@@ -99,7 +108,12 @@ class ExMan:
             description=description,
             data_version=data_version,
         )
-        exp = Experiment(root=folder, metadata=meta, config=config)
+        exp = Experiment(
+            root=folder,
+            metadata=meta,
+            config=config,
+            critical_paths=self.config.get("critical_paths"),
+        )
         exp.write_metadata()
         if config is not None:
             exp.write_config()

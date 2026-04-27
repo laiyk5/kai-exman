@@ -189,7 +189,54 @@ Where `<safe_tags_or_description>` is sanitized to ASCII alphanumeric, underscor
 
 ---
 
-## 6. CLI Commands
+## 6. Configuration & Precedence
+
+Kai-Exman uses a three-layer configuration system similar to Git:
+**Defaults < pyproject.toml < CLI Flags**.
+
+### Default Values
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `critical_paths` | `["src/", "pyproject.toml"]` | Paths checked for dirty-state detection. |
+| `ignore_paths` | `["docs/", "tests/", "README.md", "*.md", ".gitignore"]` | Paths considered non-critical (reserved for future filtering). |
+| `short_id_length` | `8` | Number of characters displayed for abbreviated experiment IDs. |
+| `strict_mode` | `false` | When true, enables stricter validation behavior. |
+
+### pyproject.toml Override
+
+Add a `[tool.kaiexman]` section to your project's ``pyproject.toml``:
+
+```toml
+[tool.kaiexman]
+critical_paths = ["src/", "pyproject.toml", "configs/"]
+strict_mode = true
+short_id_length = 12
+```
+
+Missing keys fall back to defaults. If ``pyproject.toml`` does not exist,
+the system runs entirely on defaults without error.
+
+### CLI Flag Override
+
+Any CLI flag takes highest precedence and replaces the value from
+``pyproject.toml`` or defaults:
+
+| Flag | Effect |
+| --- | --- |
+| `--strict` | Enable strict mode. |
+| `--critical-path` | Comma-separated list that **replaces** the default critical paths. |
+| `--short-id-length` | Override the abbreviated ID length. |
+
+Example:
+
+```bash
+kai-exman --critical-path "lib/,pyproject.toml" --strict init -d "safe run"
+```
+
+---
+
+## 7. CLI Commands
 
 ### Global Options
 
@@ -200,6 +247,9 @@ All commands accept:
 | `--path` | Root path for experiments. Defaults to `EXMAN_PATH` env or `./outputs`. |
 | `--no-pager` | Disable pager (auto-detected when not a TTY). |
 | `--no-color` | Disable colored output (auto-detected when not a TTY). |
+| `--strict` | Enable strict mode (overrides pyproject.toml). |
+| `--critical-path` | Override critical paths (comma-separated). |
+| `--short-id-length` | Override short ID display length. |
 
 ### Commands
 
@@ -277,7 +327,7 @@ kai-exman tag [--delete] EXP_ID TAG_NAME
 
 ---
 
-## 7. Experiment API
+## 8. Experiment API
 
 The `Experiment` class is the primary interface for recording data during an experiment run.
 
@@ -330,7 +380,7 @@ Runs `pip list --format=freeze` and writes the output to `env.txt`. If pip is un
 
 ---
 
-## 8. Error Handling
+## 9. Error Handling
 
 | Error Condition | Exception Type | Message Pattern |
 | --- | --- | --- |

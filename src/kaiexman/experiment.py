@@ -19,7 +19,7 @@ from kaiexman.models import Metadata, MetricsRow
 
 _TAG_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 
-_CRITICAL_PATHS = [
+_DEFAULT_CRITICAL_PATHS = [
     "src/",
     "pyproject.toml",
     "uv.lock",
@@ -60,6 +60,7 @@ class Experiment:
         root: Path,
         metadata: Metadata,
         config: dict[str, Any] | None = None,
+        critical_paths: list[str] | None = None,
     ) -> None:
         """Initialize an Experiment instance.
 
@@ -67,29 +68,41 @@ class Experiment:
             root: Path to the experiment directory.
             metadata: Metadata model instance.
             config: Optional configuration dictionary.
+            critical_paths: Paths to check for uncommitted changes
+                when capturing Git state. Uses built-in defaults if None.
         """
         self.root = root
         self.metadata = metadata
         self.config = config or {}
+        self.critical_paths = critical_paths
         self._metrics_path = root / "metrics.jsonl"
         self._bad_cases_path = root / "artifacts" / "bad_cases.json"
         self._lock = Lock()
 
-    def _git_info(self, cwd: str | None = None) -> tuple[str, bool]:
+    def _git_info(
+        self,
+        cwd: str | None = None,
+        critical_paths: list[str] | None = None,
+    ) -> tuple[str, bool]:
         """Capture current Git repository state.
 
         Args:
             cwd: Working directory for Git commands. Defaults to the
                 current process directory.
+            critical_paths: List of paths to check for uncommitted changes.
+                Defaults to a built-in list of logic-critical paths.
 
         Returns:
             Tuple of (commit hash, dirty flag). Returns ("", False) if
             Git is unavailable or the current directory is not a repository.
 
-        The dirty flag reflects only changes in logic-critical files
-        (src/, pyproject.toml, build files). Documentation and test
-        changes do not mark the experiment as dirty.
+        The dirty flag reflects only changes in the provided critical paths.
+        Documentation and test changes do not mark the experiment as dirty.
         """
+        if critical_paths is not None:
+            paths = critical_paths
+        else:
+            paths = _DEFAULT_CRITICAL_PATHS
         try:
             hash_raw = subprocess.run(
                 ["git", "rev-parse", "HEAD"],
@@ -109,8 +122,7 @@ class Experiment:
             ).stdout.strip()
 
             diff_result = subprocess.run(
-                ["git", "-C", repo_root, "diff", "--quiet", "HEAD", "--"]
-                + _CRITICAL_PATHS,
+                ["git", "-C", repo_root, "diff", "--quiet", "HEAD", "--"] + paths,
                 capture_output=True,
                 text=True,
                 check=False,
@@ -127,7 +139,7 @@ class Experiment:
                     "--exclude-standard",
                     "--",
                 ]
-                + _CRITICAL_PATHS,
+                + paths,
                 capture_output=True,
                 text=True,
                 check=True,
@@ -140,7 +152,7 @@ class Experiment:
 
     def write_metadata(self) -> None:
         """Write metadata to metadata.json, capturing Git state."""
-        git_hash, git_dirty = self._git_info()
+        git_hash, git_dirty = self._git_info(critical_paths=self.critical_paths)
         self.metadata.git_hash = git_hash
         self.metadata.git_dirty = git_dirty
         path = self.root / "metadata.json"

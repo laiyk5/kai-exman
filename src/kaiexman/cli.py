@@ -17,6 +17,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from kaiexman.config import ConfigManager
 from kaiexman.experiment import Experiment, validate_tag
 from kaiexman.manager import ExMan
 
@@ -151,18 +152,47 @@ def _validate_tag(tag: str) -> None:
     is_flag=True,
     help="Disable colored output (auto-detected when not a TTY)",
 )
+@click.option(
+    "--strict",
+    is_flag=True,
+    help="Enable strict mode (overrides pyproject.toml)",
+)
+@click.option(
+    "--critical-path",
+    help="Override critical paths (comma-separated, replaces defaults)",
+)
+@click.option(
+    "--short-id-length",
+    type=int,
+    help="Override short ID display length (default: 8)",
+)
 @click.pass_context
 def cli(
     ctx: click.Context,
     path: str,
     no_pager: bool,
     no_color: bool,
+    strict: bool,
+    critical_path: str | None,
+    short_id_length: int | None,
 ) -> None:
     """Kai-Exman: Rigorous Experiment Management."""
     ctx.ensure_object(dict)
     ctx.obj["path"] = path
     ctx.obj["no_pager"] = no_pager
     ctx.obj["no_color"] = no_color
+
+    cli_overrides: dict[str, Any] = {}
+    if strict:
+        cli_overrides["strict_mode"] = True
+    if critical_path is not None:
+        cli_overrides["critical_paths"] = [
+            p.strip() for p in critical_path.split(",") if p.strip()
+        ]
+    if short_id_length is not None:
+        cli_overrides["short_id_length"] = short_id_length
+
+    ctx.obj["config"] = ConfigManager(cli_overrides=cli_overrides or None)
 
 
 @cli.command()
@@ -182,13 +212,17 @@ def init(ctx: click.Context, description: str, tags: str, config: str | None) ->
             cfg = yaml.safe_load(f)
 
     tag_list = [t.strip() for t in tags.split(",")] if tags else []
-    exman = ExMan(root=ctx.obj["path"])
+    cfg_mgr: ConfigManager = ctx.obj["config"]
+    exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
     exp = exman.init(description=description, tags=tag_list, config=cfg)
+
+    short_len = cfg_mgr.get("short_id_length", 8)
+    short_id = exp.metadata.exp_id[:short_len]
 
     if sys.stdout.isatty():
         console = _get_console(ctx)
         table = Table(show_header=False, box=None)
-        table.add_row("[bold]Experiment ID:[/bold]", exp.metadata.exp_id[:8])
+        table.add_row("[bold]Experiment ID:[/bold]", short_id)
         table.add_row("[bold]Path:[/bold]", str(exp.root))
         table.add_row("[bold]Git Hash:[/bold]", exp.metadata.git_hash or "N/A")
         table.add_row("[bold]Status:[/bold]", exp.metadata.status)
@@ -207,7 +241,7 @@ def init(ctx: click.Context, description: str, tags: str, config: str | None) ->
         )
     else:
         click.echo("Experiment Initialized")
-        click.echo(f"Experiment ID: {exp.metadata.exp_id[:8]}")
+        click.echo(f"Experiment ID: {short_id}")
         click.echo(f"Path: {exp.root}")
         click.echo(f"Git Hash: {exp.metadata.git_hash or 'N/A'}")
         click.echo(f"Status: {exp.metadata.status}")
@@ -288,10 +322,11 @@ def list_cmd(
     if top:
         scored = scored[:top]
 
+    short_len = ctx.obj["config"].get("short_id_length", 8)
     if _use_pager(ctx):
-        _list_rich(ctx, scored, sort_by, order, oneline, full_id)
+        _list_rich(ctx, scored, sort_by, order, oneline, full_id, short_len)
     else:
-        _list_plain(scored, sort_by, order, oneline, full_id)
+        _list_plain(scored, sort_by, order, oneline, full_id, short_len)
 
 
 _STATUS_COLORS = {
@@ -353,17 +388,18 @@ def _oneline_dt(iso: str) -> str:
         return iso[:16] if len(iso) >= 16 else iso
 
 
-def _display_id(exp_id: str, full_id: bool) -> str:
+def _display_id(exp_id: str, full_id: bool, short_length: int = 8) -> str:
     """Return the experiment ID to display.
 
     Args:
         exp_id: Full experiment identifier.
         full_id: Whether to show the full 16-character ID.
+        short_length: Number of characters to show when abbreviated.
 
     Returns:
-        The full ID if full_id is True, otherwise the first 8 characters.
+        The full ID if full_id is True, otherwise the first short_length chars.
     """
-    return exp_id if full_id else exp_id[:8]
+    return exp_id if full_id else exp_id[:short_length]
 
 
 def _list_rich(
@@ -373,6 +409,7 @@ def _list_rich(
     order: str,
     oneline: bool,
     full_id: bool,
+    short_length: int,
 ) -> None:
     """Render experiment list with Rich and pipe through a pager.
 
@@ -383,6 +420,7 @@ def _list_rich(
         order: Sort order string ("asc" or "desc").
         oneline: Whether to use compact one-line output.
         full_id: Whether to display full 16-character IDs.
+        short_length: Number of characters for abbreviated IDs.
     """
     console = Console(force_terminal=True, record=True)
 
@@ -402,8 +440,8 @@ def _list_rich(
                 tags_display = ", ".join(exp.metadata.tags)
                 tags_part = f"[bold magenta][{tags_display}][/bold magenta]  "
 
-            disp_id = _display_id(exp.metadata.exp_id, full_id)
-            id_width = 16 if full_id else 8
+            disp_id = _display_id(exp.metadata.exp_id, full_id, short_length)
+            id_width = 16 if full_id else short_length
             line = (
                 f"[yellow]{disp_id:{id_width}}[/yellow]  "
                 f"[cyan]{date_str:16}[/cyan]  "
@@ -427,7 +465,7 @@ def _list_rich(
             if exp.metadata.tags:
                 tags_display = ", ".join(exp.metadata.tags)
                 tag_part = f" [magenta](tag: {tags_display})[/magenta]"
-            disp_id = _display_id(exp.metadata.exp_id, full_id)
+            disp_id = _display_id(exp.metadata.exp_id, full_id, short_length)
             console.print(
                 f"[yellow]experiment {disp_id}[/yellow]"
                 f"{tag_part}"
@@ -471,6 +509,7 @@ def _list_plain(
     order: str,
     oneline: bool,
     full_id: bool,
+    short_length: int,
 ) -> None:
     """Render experiment list as plain text.
 
@@ -480,6 +519,7 @@ def _list_plain(
         order: Sort order string ("asc" or "desc").
         oneline: Whether to use compact one-line output.
         full_id: Whether to display full 16-character IDs.
+        short_length: Number of characters for abbreviated IDs.
     """
     if oneline:
         for exp, _best, score in scored:
@@ -492,8 +532,8 @@ def _list_plain(
                 tags_display = ", ".join(exp.metadata.tags)
                 tags_part = f"[{tags_display}]  "
 
-            disp_id = _display_id(exp.metadata.exp_id, full_id)
-            id_width = 16 if full_id else 8
+            disp_id = _display_id(exp.metadata.exp_id, full_id, short_length)
+            id_width = 16 if full_id else short_length
             line = (
                 f"{disp_id:{id_width}}  {date_str:16}  {status_label:10}  "
                 f"{tags_part}{desc}"
@@ -513,7 +553,7 @@ def _list_plain(
             if exp.metadata.tags:
                 tags_display = ", ".join(exp.metadata.tags)
                 tag_part = f" (tag: {tags_display})"
-            disp_id = _display_id(exp.metadata.exp_id, full_id)
+            disp_id = _display_id(exp.metadata.exp_id, full_id, short_length)
             click.echo(f"experiment {disp_id}{tag_part} [{exp.metadata.status}]")
             click.echo(f"Author: {getpass.getuser()}")
             click.echo(f"Date:   {dt}")
@@ -547,16 +587,19 @@ def finish(ctx: click.Context, exp_id: str, status: str, notes: str) -> None:
     Computes best metrics, updates status, and writes a Markdown summary
     report to the experiment directory.
     """
-    exman = ExMan(root=ctx.obj["path"])
+    cfg_mgr: ConfigManager = ctx.obj["config"]
+    exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
     resolved_id = _resolve_exp_id(exman, exp_id)
     exp = exman.finish(exp_id=resolved_id, status=status, notes=notes)
 
     if exp is None:
         raise click.ClickException(f"Experiment '{resolved_id}' not found.")
 
+    short_len = cfg_mgr.get("short_id_length", 8)
+    short_id = exp.metadata.exp_id[:short_len]
+
     if sys.stdout.isatty():
         console = _get_console(ctx)
-        short_id = exp.metadata.exp_id[:8]
         console.print(
             Panel(
                 f"[bold green]Experiment {short_id} finished.[/bold green]\n"
@@ -567,7 +610,6 @@ def finish(ctx: click.Context, exp_id: str, status: str, notes: str) -> None:
             )
         )
     else:
-        short_id = exp.metadata.exp_id[:8]
         click.echo(f"Experiment {short_id} finished.")
         click.echo(f"Status: {status}")
         click.echo(f"Summary written to: {exp.root / 'summary.md'}")
@@ -587,7 +629,8 @@ def show(ctx: click.Context, exp_id: str, full_id: bool) -> None:
     Shows metadata, configuration, and best metrics in a structured
     panel layout.
     """
-    exman = ExMan(root=ctx.obj["path"])
+    cfg_mgr: ConfigManager = ctx.obj["config"]
+    exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
     resolved_id = _resolve_exp_id(exman, exp_id)
     exp = exman.get(resolved_id)
 
@@ -595,7 +638,8 @@ def show(ctx: click.Context, exp_id: str, full_id: bool) -> None:
         raise click.ClickException(f"Experiment '{resolved_id}' not found.")
 
     best_metrics = exp.compute_best_metrics()
-    disp_id = _display_id(exp.metadata.exp_id, full_id)
+    short_len = cfg_mgr.get("short_id_length", 8)
+    disp_id = _display_id(exp.metadata.exp_id, full_id, short_len)
 
     if sys.stdout.isatty():
         console = _get_console(ctx)
@@ -689,7 +733,8 @@ def tag_cmd(
 ) -> None:
     """Add or remove a tag on an experiment."""
     _validate_tag(tag_name)
-    exman = ExMan(root=ctx.obj["path"])
+    cfg_mgr: ConfigManager = ctx.obj["config"]
+    exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
     resolved_id = _resolve_exp_id(exman, exp_id)
     exp = exman.get(resolved_id)
 
@@ -703,7 +748,8 @@ def tag_cmd(
         exp.add_tag(tag_name)
         action = "added to"
 
-    short_id = resolved_id[:8]
+    short_len = cfg_mgr.get("short_id_length", 8)
+    short_id = resolved_id[:short_len]
     if sys.stdout.isatty():
         console = _get_console(ctx)
         console.print(f"[bold green]Tag '{tag_name}' {action} {short_id}.[/bold green]")
