@@ -96,13 +96,19 @@ def test_experiment_finish(tmp_exman_path):
     exp.log_metrics(0, {"loss": 1.0, "acc": 0.5})
     exp.log_metrics(1, {"loss": 0.5, "acc": 0.9})
 
+    # finish() requires at least one attempt with an exit_code
+    from kaiexman.models import Attempt
+
+    exp.metadata.attempts.append(
+        Attempt(sequence=1, status="running", exit_code=0)
+    )
+    exp.write_metadata()
+
     finished = exman.finish(
         exp_id=exp.metadata.exp_id,
-        status="success",
         notes="Looks good.",
     )
 
-    assert finished is not None
     assert finished.metadata.status == "success"
 
     summary_file = finished.root / "summary.md"

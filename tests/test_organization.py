@@ -312,6 +312,13 @@ def test_resume_case_a_ignores_group_parameter(tmp_exman_path, monkeypatch):
     parent = exman.init(description="parent", group="train")
     parent_hash = parent.metadata.git_hash
 
+    # Case A requires the parent to have at least one attempt
+    from kaiexman.models import Attempt
+    parent.metadata.attempts.append(
+        Attempt(sequence=1, status="running")
+    )
+    parent.write_metadata()
+
     monkeypatch.setattr(
         exman, "_current_git_state", lambda: (parent_hash, False)
     )
@@ -367,8 +374,13 @@ def test_resume_blocks_terminal_success(tmp_exman_path, monkeypatch):
     parent = exman.init(description="parent", group="train")
     parent_hash = parent.metadata.git_hash
 
-    # Finish the experiment (terminal state)
-    exman.finish(parent.metadata.exp_id, status="success")
+    # Create an attempt and finish the experiment (terminal state)
+    from kaiexman.models import Attempt
+    parent.metadata.attempts.append(
+        Attempt(sequence=1, status="running", exit_code=0)
+    )
+    parent.write_metadata()
+    exman.finish(parent.metadata.exp_id)
 
     monkeypatch.setattr(
         exman, "_current_git_state", lambda: (parent_hash, False)
@@ -378,13 +390,18 @@ def test_resume_blocks_terminal_success(tmp_exman_path, monkeypatch):
         exman.resume(parent.metadata.exp_id)
 
 
-def test_resume_blocks_terminal_finished(tmp_exman_path, monkeypatch):
+def test_resume_blocks_terminal_failed(tmp_exman_path, monkeypatch):
     exman = ExMan(root=tmp_exman_path)
     parent = exman.init(description="parent", group="train")
     parent_hash = parent.metadata.git_hash
 
-    # Finish with legacy "finished" status (still terminal)
-    exman.finish(parent.metadata.exp_id, status="finished")
+    # Create an attempt and finish with failed status (terminal)
+    from kaiexman.models import Attempt
+    parent.metadata.attempts.append(
+        Attempt(sequence=1, status="running", exit_code=1)
+    )
+    parent.write_metadata()
+    exman.finish(parent.metadata.exp_id)
 
     monkeypatch.setattr(
         exman, "_current_git_state", lambda: (parent_hash, False)
@@ -399,6 +416,13 @@ def test_resume_allows_non_terminal(tmp_exman_path, monkeypatch):
     parent = exman.init(description="parent", group="train")
     parent_hash = parent.metadata.git_hash
 
+    # Case A requires the parent to have at least one attempt
+    from kaiexman.models import Attempt
+    parent.metadata.attempts.append(
+        Attempt(sequence=1, status="running")
+    )
+    parent.write_metadata()
+
     monkeypatch.setattr(
         exman, "_current_git_state", lambda: (parent_hash, False)
     )
@@ -406,22 +430,31 @@ def test_resume_allows_non_terminal(tmp_exman_path, monkeypatch):
     # Experiment is still "running" — should be allowed
     exp, is_new, attempt_num = exman.resume(parent.metadata.exp_id)
     assert is_new is False
-    assert attempt_num == 1
-    assert len(exp.metadata.attempts) == 1
+    assert attempt_num == 2
+    assert len(exp.metadata.attempts) == 2
 
 
 def test_finish_defaults_to_success(tmp_exman_path):
     exman = ExMan(root=tmp_exman_path)
     exp = exman.init(description="test")
+    from kaiexman.models import Attempt
+    exp.metadata.attempts.append(
+        Attempt(sequence=1, status="running", exit_code=0)
+    )
+    exp.write_metadata()
     finished = exman.finish(exp.metadata.exp_id)
-    assert finished is not None
     assert finished.metadata.status == "success"
 
 
 def test_index_includes_status(tmp_exman_path):
     exman = ExMan(root=tmp_exman_path)
     exp = exman.init(description="test", group="train")
-    exman.finish(exp.metadata.exp_id, status="success")
+    from kaiexman.models import Attempt
+    exp.metadata.attempts.append(
+        Attempt(sequence=1, status="running", exit_code=0)
+    )
+    exp.write_metadata()
+    exman.finish(exp.metadata.exp_id)
 
     index = exman._load_index()
     assert index is not None

@@ -81,6 +81,11 @@ def test_sort_by_finished(tmp_exman_path):
     exman = ExMan(root=tmp_exman_path)
     exman.init(description="unfinished")
     e2 = exman.init(description="finished")
+    from kaiexman.models import Attempt
+    e2.metadata.attempts.append(
+        Attempt(sequence=1, status="running", exit_code=0)
+    )
+    e2.write_metadata()
     exman.finish(e2.metadata.exp_id)
 
     runner = CliRunner()
@@ -211,8 +216,8 @@ def test_tree_shows_lineage_topology(tmp_exman_path, monkeypatch):
         cli.cli, ["--path", tmp_exman_path, "list", "--tree"]
     )
     assert result.exit_code == 0
-    # Root marker
-    assert "*" in result.output
+    # Root marker (draft parent has no attempts)
+    assert "○" in result.output
     # Child connector
     assert "`-- o" in result.output or "|-- o" in result.output
     assert "parent" in result.output
@@ -244,8 +249,8 @@ def test_tree_sorts_only_roots(tmp_exman_path, monkeypatch):
     assert child_idx > root_b_idx
     assert root_a_idx != -1
 
-    # Verify the tree connectors are present
-    assert "*" in result.output
+    # Verify the tree connectors are present (draft roots)
+    assert "○" in result.output
     assert "`-- o" in result.output or "|-- o" in result.output
 
 
@@ -258,7 +263,12 @@ def test_rich_renderer_produces_output(tmp_exman_path, monkeypatch):
     exman = ExMan(root=tmp_exman_path)
     exman.init(description="running_exp")
     finished = exman.init(description="finished_exp")
-    exman.finish(finished.metadata.exp_id, status="success")
+    from kaiexman.models import Attempt
+    finished.metadata.attempts.append(
+        Attempt(sequence=1, status="running", exit_code=0)
+    )
+    finished.write_metadata()
+    exman.finish(finished.metadata.exp_id)
 
     # Force Rich renderer by mocking TTY detection
     monkeypatch.setattr(cli, "_use_pager", lambda _ctx: True)

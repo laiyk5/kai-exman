@@ -81,7 +81,7 @@ class Metadata(BaseModel):
     tags: list[str] = []                 # Categorical tags
     data_version: str = ""               # Data version or hash for reproducibility
     description: str = ""                # Human-readable description
-    status: str = "running"              # Current status: running, success, failed, finished
+    status: str = "running"              # Current status: running, success, failed, aborted
 ```
 
 ### Status Lifecycle
@@ -91,11 +91,15 @@ Experiments transition through the following statuses:
 | Status | Meaning | How Set |
 | --- | --- | --- |
 | `running` | Experiment is active. | Default at initialization. |
-| `finished` | Experiment was closed via `finish()` with default status. | `kai-exman finish <exp_id>` |
-| `success` | Experiment completed successfully. | `kai-exman finish <exp_id> -s success` |
-| `failed` | Experiment terminated with errors. | `kai-exman finish <exp_id> -s failed` |
+| `success` | Experiment completed successfully (exit code 0). | `finish()` when last attempt has `exit_code == 0`. |
+| `failed` | Experiment terminated with errors (non-zero exit). | `finish()` when last attempt has non-zero `exit_code`. |
+| `aborted` | Experiment was stopped or did not complete (no exit code). | `finish()` when last attempt has `exit_code is None`. |
 
-`finish()` accepts an arbitrary status string, but the four values above are the convention. There is no enforced state machine; callers may set any status they choose.
+`finish()` **auto-determines** status from the last attempt's `exit_code`. It does **not** accept an arbitrary status string. The state machine is enforced:
+
+- `finish()` raises `RuntimeError` if the experiment has **no attempts**.
+- `resume()` raises `LockedExperimentError` if the experiment is already in a **terminal state** (`success`, `failed`, or `aborted`).
+- Terminal experiments are immutable; create a new iteration (Case B) to evolve them.
 
 ### Git Dirty Semantics
 
@@ -165,7 +169,7 @@ This applies to all list-style commands (`list`, `list --oneline`, `list --tree`
 | Success | Green | Status label |
 | Running | Blue | Status label |
 | Failed | Red | Status label |
-| Finished | Green | Status label |
+| Aborted | Dim | Status label |
 | Parameters | Blue | Config summary |
 | Metric score | Yellow | Sort-by metric display |
 
@@ -310,14 +314,15 @@ kai-exman show [--full-id] EXP_ID
 Close an experiment and generate `summary.md`.
 
 ```bash
-kai-exman finish [--status STATUS] [--notes NOTES] EXP_ID
+kai-exman finish [--notes NOTES] EXP_ID
 ```
 
 | Option | Description |
 | --- | --- |
-| `-s, --status` | Final status (default: `finished`). |
 | `-n, --notes` | Post-mortem notes included in the summary. |
 | `EXP_ID` | Full ID or unambiguous prefix of the experiment to finish. |
+
+Status is auto-determined from the last attempt's `exit_code`: `0` → `success`, non-zero → `failed`, `None` → `aborted`. Raises an error if the experiment has no attempts.
 
 #### `tag`
 
@@ -398,7 +403,9 @@ Runs `pip list --format=freeze` and writes the output to `env.txt`. If pip is un
 | No matching ID prefix | `ClickException` | `No experiment found starting with 'xyz'` |
 | Missing artifact source | `FileNotFoundError` | Standard Python exception. |
 | Non-serializable bad case | `TypeError` | Standard `json.dumps` failure. |
-| Missing experiment for `finish` | Returns `None` | `ExMan.finish()` returns `None` instead of raising. |
+| Missing experiment for `finish` | `ValueError` | `Experiment '<id>' not found` |
+| Finish with no attempts | `RuntimeError` | `Experiment '<id>' has no attempts...` |
+| Resume locked experiment | `LockedExperimentError` | `Experiment <id> is already in a terminal state...` |
 
 ---
 
@@ -502,15 +509,18 @@ class Metadata(BaseModel):
 
 1. Capture current Git state (hash + dirty flag on critical paths).
 2. Compare against the parent experiment's recorded ``git_hash``.
-3. **Case A** (hash matches and workspace is clean):
+3. **Case A** (hash matches, workspace is clean, **and parent has at least one attempt**):
    - Append a new ``Attempt`` record with ``sequence = len(attempts) + 1`` and ``reason = "run_N"``.
    - Set environment variable ``KAI_EXMAN_ATTEMPT_COUNT`` to the new sequence number.
-4. **Case B** (hash differs or workspace is dirty):
+   - Blocked if the experiment is in a terminal state (raises ``LockedExperimentError``).
+4. **Case B** (hash differs, workspace is dirty, **or parent has no attempts**):
    - Call ``ExMan.init()`` with a new UUID.
    - Set ``metadata.parent_id`` to the old experiment ID.
+   - Append an initial ``Attempt(sequence=1, status="running", reason="run_1")``.
    - Symlink all files from ``parent/artifacts/checkpoints/`` into the new experiment.
      Falls back to a hard copy if symlinking fails (e.g., on Windows without Developer Mode).
    - Set ``KAI_EXMAN_PARENT_PATH`` to the parent's root directory.
+   - Emits a warning if the parent has no successful attempts (only configuration is inherited, not data/state).
 
 ### Environment Variables
 
@@ -560,5 +570,7 @@ After the command exits, the last attempt record (Case A) or the experiment stat
 | Command | Indicator | Meaning |
 | --- | --- | --- |
 | ``list`` | ``->`` prefix before ID | Experiment has a ``parent_id``. |
+| ``list --tree`` | ``○`` root marker | Draft experiment (no attempts yet). |
+| ``list --tree`` | ``*`` root marker | Experiment with at least one attempt. |
 | ``show`` | ``Parent: <short_id>`` row | Displays the parent experiment link. |
 | ``show`` | ``Attempts`` panel | Table of all retry attempts with start/end times and status. |

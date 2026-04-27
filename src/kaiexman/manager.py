@@ -26,7 +26,7 @@ class LockedExperimentError(RuntimeError):
     """
 
 
-_TERMINAL_STATUSES: set[str] = {"success", "finished"}
+_TERMINAL_STATUSES: set[str] = {"success", "failed", "aborted"}
 
 
 class ExMan:
@@ -370,33 +370,52 @@ class ExMan:
     def finish(
         self,
         exp_id: str,
-        status: str = "success",
         notes: str = "",
-    ) -> Experiment | None:
+    ) -> Experiment:
         """Finalize an experiment and generate its summary.
 
-        If the experiment has attempt history, the last attempt's status is
-        also updated to match the final status, ensuring the global status
-        and attempt history remain consistent.
+        The final status is automatically determined from the last attempt's
+        exit code:
+
+        - exit_code == 0 → "success"
+        - exit_code is not None and != 0 → "failed"
+        - exit_code is None → "aborted"
 
         Args:
             exp_id: Full experiment identifier.
-            status: Final status string (default: "finished").
             notes: Optional post-mortem notes for the summary.
 
         Returns:
-            The finished Experiment instance, or None if the ID was not found.
+            The finished Experiment instance.
+
+        Raises:
+            ValueError: If the experiment is not found.
+            RuntimeError: If the experiment has no attempts to finish.
         """
         exp = self.get(exp_id)
         if exp is None:
-            return None
+            raise ValueError(f"Experiment '{exp_id}' not found")
+
+        if not exp.metadata.attempts:
+            raise RuntimeError(
+                f"Experiment '{exp_id}' has no attempts. "
+                "Cannot finish an experiment that was never run."
+            )
+
+        last = exp.metadata.attempts[-1]
+        if last.exit_code == 0:
+            status = "success"
+        elif last.exit_code is not None:
+            status = "failed"
+        else:
+            status = "aborted"
+
+        last.status = status
+        if not last.end_time:
+            last.end_time = datetime.now().isoformat()
+
         best_metrics = exp.compute_best_metrics()
         exp.write_summary(status=status, notes=notes, best_metrics=best_metrics)
-        if exp.metadata.attempts:
-            last = exp.metadata.attempts[-1]
-            last.status = status
-            if not last.end_time:
-                last.end_time = datetime.now().isoformat()
         exp.update_status(status)
         self._update_index(exp, "add")
         return exp
@@ -514,9 +533,23 @@ class ExMan:
 
         current_hash, current_dirty = self._current_git_state()
 
+        parent_has_attempts = bool(parent.metadata.attempts)
+        has_successful_attempt = any(
+            a.status == "success" for a in parent.metadata.attempts
+        )
+
+        if parent_has_attempts and not has_successful_attempt:
+            warnings.warn(
+                f"Experiment '{exp_id}' has no successful attempts. "
+                "Only configuration (not data/state) will be inherited.",
+                stacklevel=2,
+            )
+
         # Case A: Logic-Clean Resume (Retry)
+        # Only possible if the parent actually has attempts to resume from.
         if (
-            current_hash
+            parent_has_attempts
+            and current_hash
             and current_hash == parent.metadata.git_hash
             and not current_dirty
         ):
@@ -554,6 +587,9 @@ class ExMan:
             group=group or "default",
         )
         child.metadata.parent_id = parent.metadata.exp_id
+        child.metadata.attempts.append(
+            Attempt(sequence=1, status="running", reason="run_1")
+        )
         child.write_metadata()
         self._update_index(child, "add")
 

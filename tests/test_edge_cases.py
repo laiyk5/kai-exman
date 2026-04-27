@@ -124,10 +124,10 @@ def test_compute_best_metrics_skips_blank_lines(tmp_exman_path):
 # -- Edge: finish on non-existent experiment -------------------------------
 
 
-def test_finish_nonexistent_experiment_returns_none(tmp_exman_path):
+def test_finish_nonexistent_experiment_raises(tmp_exman_path):
     exman = ExMan(root=tmp_exman_path)
-    result = exman.finish(exp_id="does_not_exist", status="success")
-    assert result is None
+    with pytest.raises(ValueError, match="not found"):
+        exman.finish(exp_id="does_not_exist")
 
 
 # -- Edge: tags with empty entries -----------------------------------------

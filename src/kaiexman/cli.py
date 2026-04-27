@@ -327,6 +327,17 @@ def run(
     short_len = cfg_mgr.get("short_id_length", 8)
     short_id = exp.metadata.exp_id[:short_len]
 
+    # Ensure an attempt record exists before execution.
+    # Case A resumes already have attempts from ExMan.resume().
+    if not exp.metadata.attempts:
+        from kaiexman.models import Attempt
+
+        exp.metadata.attempts.append(
+            Attempt(sequence=1, status="running", reason="run_1")
+        )
+        exp.write_metadata()
+        attempt_num = 1
+
     # Set resume environment variables
     env = os.environ.copy()
     env["KAI_EXMAN_RESUME"] = "1"
@@ -355,21 +366,20 @@ def run(
     # Execute the command
     result = subprocess.run(command, env=env)
 
-    # Update attempt record if resuming
-    if resume and not is_new and exp.metadata.attempts:
-        last_attempt = exp.metadata.attempts[-1]
-        last_attempt.end_time = datetime.now().isoformat()
-        last_attempt.exit_code = result.returncode
-        last_attempt.status = "success" if result.returncode == 0 else "failed"
-        # Promote global status from latest attempt
-        exp.metadata.status = last_attempt.status
-        exp.write_metadata()
-
-    # Update overall status for new experiments
-    if is_new:
-        exp.update_status(
-            "success" if result.returncode == 0 else "failed"
-        )
+    # Update the last attempt with the outcome.
+    last_attempt = exp.metadata.attempts[-1]
+    last_attempt.end_time = datetime.now().isoformat()
+    last_attempt.exit_code = result.returncode
+    if result.returncode == 0:
+        last_attempt.status = "success"
+    elif result.returncode is not None and (
+        result.returncode < 0 or result.returncode >= 128
+    ):
+        last_attempt.status = "aborted"
+    else:
+        last_attempt.status = "failed"
+    exp.metadata.status = last_attempt.status
+    exp.write_metadata()
 
     sys.exit(result.returncode)
 
@@ -503,7 +513,7 @@ _STATUS_COLORS = {
     "running": "yellow",
     "failed": "red",
     "error": "red",
-    "finished": "green",
+    "aborted": "dim",
 }
 
 
@@ -793,8 +803,13 @@ def _build_tree_lines(
         disp_id = _display_id(exp.metadata.exp_id, full_id, short_len)
         desc = exp.metadata.description or "[dim](no description)[/dim]"
 
+        is_draft = not exp.metadata.attempts
+        if is_draft:
+            status_label = "DRAFT"
+            status_color = "dim"
+
         if is_root:
-            connector = "*"
+            connector = "○" if is_draft else "*"
         else:
             connector = "`-- o" if is_last else "|-- o"
 
@@ -819,28 +834,37 @@ def _build_tree_lines(
 
 @cli.command()
 @click.argument("exp_id")
-@click.option("--status", "-s", default="success", help="Final status")
 @click.option("--notes", "-n", default="", help="Post-mortem notes")
 @click.pass_context
-def finish(ctx: click.Context, exp_id: str, status: str, notes: str) -> None:
+def finish(ctx: click.Context, exp_id: str, notes: str) -> None:
     """Close an experiment and generate summary.md.
 
-    Computes best metrics, updates status, and writes a Markdown summary
-    report to the experiment directory.
+    Computes best metrics, determines final status from the last attempt's
+    exit code, and writes a Markdown summary report.
+
+    Status is determined automatically:
+      - exit_code == 0        → success
+      - exit_code != 0        → failed
+      - exit_code is None     → aborted
     """
     cfg_mgr: ConfigManager = ctx.obj["config"]
     exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
     resolved_id = _resolve_exp_id(exman, exp_id)
-    exp = exman.finish(exp_id=resolved_id, status=status, notes=notes)
 
-    if exp is None:
-        raise click.ClickException(f"Experiment '{resolved_id}' not found.")
+    try:
+        exp = exman.finish(exp_id=resolved_id, notes=notes)
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc)) from exc
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
     short_len = cfg_mgr.get("short_id_length", 8)
     short_id = exp.metadata.exp_id[:short_len]
+    status = exp.metadata.status
+    status_color = _STATUS_COLORS.get(status, "white")
 
     _echo_lines(ctx, [
-        f"[bold green]Experiment {short_id} finished.[/bold green]",
+        f"[bold {status_color}]Experiment {short_id} {status}.[/bold {status_color}]",
         f"Status: {status}",
         f"Summary written to: {exp.root / 'summary.md'}",
     ])

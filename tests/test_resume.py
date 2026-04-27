@@ -11,7 +11,8 @@ from kaiexman import ExMan
 from kaiexman.cli import cli
 
 
-def test_resume_logic_clean_reopens_existing(tmp_exman_path, monkeypatch):
+def test_resume_no_attempts_always_creates_new_id(tmp_exman_path, monkeypatch):
+    """Parent with no attempts → resume always creates a new ID (Case B)."""
     exman = ExMan(root=tmp_exman_path)
     parent = exman.init(description="parent")
     parent_hash = parent.metadata.git_hash
@@ -21,21 +22,53 @@ def test_resume_logic_clean_reopens_existing(tmp_exman_path, monkeypatch):
         exman, "_current_git_state", lambda: (parent_hash, False)
     )
 
-    exp, is_new, attempt_num = exman.resume(parent.metadata.exp_id)
+    child, is_new, attempt_num = exman.resume(parent.metadata.exp_id)
 
-    assert is_new is False
+    assert is_new is True
     assert attempt_num == 1
-    assert exp.metadata.exp_id == parent.metadata.exp_id
-    assert len(exp.metadata.attempts) == 1
-    assert exp.metadata.attempts[0].sequence == 1
-    assert exp.metadata.attempts[0].reason == "run_1"
-    assert exp.metadata.status == "running"
+    assert child.metadata.exp_id != parent.metadata.exp_id
+    assert child.metadata.parent_id == parent.metadata.exp_id
 
 
-def test_resume_logic_clean_appends_second_attempt(tmp_exman_path, monkeypatch):
+def test_resume_with_attempts_appends_new_attempt(tmp_exman_path, monkeypatch):
+    """Parent with attempts → clean resume appends a new attempt (Case A)."""
     exman = ExMan(root=tmp_exman_path)
     parent = exman.init(description="parent")
     parent_hash = parent.metadata.git_hash
+
+    # Seed an initial attempt so Case A is eligible
+    from kaiexman.models import Attempt
+    parent.metadata.attempts.append(
+        Attempt(sequence=1, status="running", reason="run_1")
+    )
+    parent.write_metadata()
+
+    monkeypatch.setattr(
+        exman, "_current_git_state", lambda: (parent_hash, False)
+    )
+
+    exp, is_new, attempt_num = exman.resume(parent.metadata.exp_id)
+
+    assert is_new is False
+    assert attempt_num == 2
+    assert exp.metadata.exp_id == parent.metadata.exp_id
+    assert len(exp.metadata.attempts) == 2
+    assert exp.metadata.attempts[1].sequence == 2
+    assert exp.metadata.attempts[1].reason == "run_2"
+    assert exp.metadata.status == "running"
+
+
+def test_resume_second_attempt_on_existing(tmp_exman_path, monkeypatch):
+    """Two clean resumes on a parent with attempts create attempts 2 and 3."""
+    exman = ExMan(root=tmp_exman_path)
+    parent = exman.init(description="parent")
+    parent_hash = parent.metadata.git_hash
+
+    from kaiexman.models import Attempt
+    parent.metadata.attempts.append(
+        Attempt(sequence=1, status="running", reason="run_1")
+    )
+    parent.write_metadata()
 
     monkeypatch.setattr(
         exman, "_current_git_state", lambda: (parent_hash, False)
@@ -45,10 +78,10 @@ def test_resume_logic_clean_appends_second_attempt(tmp_exman_path, monkeypatch):
     exp, is_new, attempt_num = exman.resume(parent.metadata.exp_id)
 
     assert is_new is False
-    assert attempt_num == 2
-    assert len(exp.metadata.attempts) == 2
-    assert exp.metadata.attempts[1].sequence == 2
-    assert exp.metadata.attempts[1].reason == "run_2"
+    assert attempt_num == 3
+    assert len(exp.metadata.attempts) == 3
+    assert exp.metadata.attempts[2].sequence == 3
+    assert exp.metadata.attempts[2].reason == "run_3"
 
 
 def test_resume_logic_dirty_creates_new_experiment(tmp_exman_path, monkeypatch):
@@ -157,17 +190,18 @@ def test_run_command_sets_env_vars(tmp_exman_path, monkeypatch):
 
 def test_metadata_serialization_with_attempts(tmp_exman_path, monkeypatch):
     exman = ExMan(root=tmp_exman_path)
-    exp = exman.init(description="test")
-    exp_hash = exp.metadata.git_hash
+    parent = exman.init(description="test")
+    exp_hash = parent.metadata.git_hash
 
     monkeypatch.setattr(
         exman, "_current_git_state", lambda: (exp_hash, False)
     )
 
-    exman.resume(exp.metadata.exp_id)
+    # Parent has no attempts → Case B creates a child with a new ID
+    child, _is_new, _attempt = exman.resume(parent.metadata.exp_id)
 
-    # Reload from disk and verify attempts persist
-    meta_path = exp.root / "metadata.json"
+    # Reload from disk and verify attempts persist on the child
+    meta_path = child.root / "metadata.json"
     raw = json.loads(meta_path.read_text(encoding="utf-8"))
     assert "attempts" in raw
     assert len(raw["attempts"]) == 1
@@ -181,24 +215,27 @@ def test_status_promotion_from_latest_attempt(tmp_exman_path, monkeypatch):
     parent = exman.init(description="parent")
     parent_hash = parent.metadata.git_hash
 
+    # Seed an attempt so Case A (same ID) is eligible
+    from kaiexman.models import Attempt
+    parent.metadata.attempts.append(
+        Attempt(sequence=1, status="running")
+    )
+    parent.write_metadata()
+
     monkeypatch.setattr(
         exman, "_current_git_state", lambda: (parent_hash, False)
     )
 
+    # Resume while still running → creates attempt 2
     exp, _is_new, _attempt = exman.resume(parent.metadata.exp_id)
-    exp.metadata.attempts[0].status = "failed"
-    exp.metadata.status = "failed"
+    assert len(exp.metadata.attempts) == 2
+    assert exp.metadata.attempts[1].status == "running"
+    assert exp.metadata.status == "running"
+
+    # Simulate run command finishing attempt 2 as success
+    exp.metadata.attempts[1].status = "success"
+    exp.metadata.status = "success"
     exp.write_metadata()
-
-    # Second resume should create attempt 2 and reset status to running
-    exp2, _is_new2, _attempt2 = exman.resume(parent.metadata.exp_id)
-    assert exp2.metadata.attempts[1].status == "running"
-    assert exp2.metadata.status == "running"
-
-    # Simulate the run command promoting status
-    exp2.metadata.attempts[1].status = "success"
-    exp2.metadata.status = "success"
-    exp2.write_metadata()
 
     # Reload and verify global status matches latest attempt
     reloaded = exman.get(parent.metadata.exp_id)
@@ -207,36 +244,23 @@ def test_status_promotion_from_latest_attempt(tmp_exman_path, monkeypatch):
     assert reloaded.metadata.attempts[-1].status == "success"
 
 
-def test_three_failed_one_success_promotes_to_success(tmp_exman_path, monkeypatch):
-    """Simulate 3 failed attempts followed by a successful 4th."""
+def test_three_failed_one_success_promotes_to_success(tmp_exman_path):
+    """Global status reflects the latest attempt's status."""
     exman = ExMan(root=tmp_exman_path)
-    parent = exman.init(description="parent")
-    parent_hash = parent.metadata.git_hash
+    exp = exman.init(description="parent")
 
-    monkeypatch.setattr(
-        exman, "_current_git_state", lambda: (parent_hash, False)
-    )
-
-    # Attempt 1: failed
-    exp1, _is_new1, _attempt1 = exman.resume(parent.metadata.exp_id)
-    exman.finish(exp1.metadata.exp_id, status="failed")
-
-    # Attempt 2: failed
-    exp2, _is_new2, _attempt2 = exman.resume(parent.metadata.exp_id)
-    exman.finish(exp2.metadata.exp_id, status="failed")
-
-    # Attempt 3: failed
-    exp3, _is_new3, _attempt3 = exman.resume(parent.metadata.exp_id)
-    exman.finish(exp3.metadata.exp_id, status="failed")
-
-    # Attempt 4: success
-    exp4, _is_new4, _attempt4 = exman.resume(parent.metadata.exp_id)
-    exp4.metadata.attempts[-1].status = "success"
-    exp4.metadata.status = "success"
-    exp4.write_metadata()
+    from kaiexman.models import Attempt
+    exp.metadata.attempts = [
+        Attempt(sequence=1, status="failed", exit_code=1),
+        Attempt(sequence=2, status="failed", exit_code=1),
+        Attempt(sequence=3, status="failed", exit_code=1),
+        Attempt(sequence=4, status="success", exit_code=0),
+    ]
+    exp.metadata.status = "success"
+    exp.write_metadata()
 
     # Reload from disk and verify global status is success
-    reloaded = exman.get(parent.metadata.exp_id)
+    reloaded = exman.get(exp.metadata.exp_id)
     assert reloaded is not None
     assert len(reloaded.metadata.attempts) == 4
     assert reloaded.metadata.attempts[0].status == "failed"
@@ -252,6 +276,13 @@ def test_finish_updates_last_attempt_status(tmp_exman_path, monkeypatch):
     parent = exman.init(description="parent")
     parent_hash = parent.metadata.git_hash
 
+    # Seed an attempt so Case A (same ID) is eligible
+    from kaiexman.models import Attempt
+    parent.metadata.attempts.append(
+        Attempt(sequence=1, status="running")
+    )
+    parent.write_metadata()
+
     monkeypatch.setattr(
         exman, "_current_git_state", lambda: (parent_hash, False)
     )
@@ -259,7 +290,9 @@ def test_finish_updates_last_attempt_status(tmp_exman_path, monkeypatch):
     exp, _is_new, _attempt = exman.resume(parent.metadata.exp_id)
     assert exp.metadata.attempts[-1].status == "running"
 
-    exman.finish(exp.metadata.exp_id, status="success")
+    exp.metadata.attempts[-1].exit_code = 0
+    exp.write_metadata()
+    exman.finish(exp.metadata.exp_id)
 
     reloaded = exman.get(parent.metadata.exp_id)
     assert reloaded is not None
