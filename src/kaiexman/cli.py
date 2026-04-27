@@ -471,8 +471,25 @@ def run(
         msg = f"[bold green]Running experiment {short_id}.[/bold green]"
     _echo_lines(ctx, [msg])
 
+    # Heuristic: if the user passed a bare ID-looking token without
+    # --resume, hint at the likely mistake.
+    if not resume and command:
+        first = command[0]
+        if len(first) >= 4 and all(c in "0123456789abcdef" for c in first.lower()):
+            _echo_lines(ctx, [
+                f"[yellow]Hint: '{first}' looks like an experiment ID."
+                f" Did you mean --resume {first}?[/yellow]"
+            ])
+
     # Execute the command
-    result = subprocess.run(command, env=env)
+    try:
+        result = subprocess.run(command, env=env)
+    except FileNotFoundError as exc:
+        raise click.ClickException(
+            f"Cannot execute command: {exc}."
+            f" If you meant to resume an experiment,"
+            f" use --resume <exp_id>."
+        ) from exc
 
     # Update the last attempt with the outcome.
     last_attempt = exp.metadata.attempts[-1]
