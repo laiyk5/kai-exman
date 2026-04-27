@@ -1062,10 +1062,13 @@ def finish(ctx: click.Context, exp_id: str | None, summary: str, notes: str) -> 
     status = exp.metadata.status
     status_color = _STATUS_COLORS.get(status, "white")
 
+    status_line = (
+        f"[bold {status_color}]Experiment {short_id} {status}.[/bold {status_color}]"
+    )
     _echo_lines(
         ctx,
         [
-            f"[bold {status_color}]Experiment {short_id} {status}.[/bold {status_color}]",
+            status_line,
             f"Status: {status}",
             f"Summary written to: {exp.root / 'summary.md'}",
         ],
