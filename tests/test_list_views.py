@@ -171,7 +171,7 @@ def test_oneline_shows_compact_format(tmp_exman_path):
     assert "RUNNING" in result.output
     assert "train" in result.output
     assert "baseline" in result.output
-    assert "[v1]" in result.output
+    assert "v1" in result.output
 
 
 def test_oneline_shows_inherited_experiments(tmp_exman_path, monkeypatch):

@@ -18,8 +18,6 @@ from typing import Any
 import click
 import yaml
 from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
 
 from kaiexman.config import ConfigManager
 from kaiexman.experiment import Experiment, validate_group, validate_tag
@@ -82,19 +80,28 @@ def _use_pager(ctx: click.Context) -> bool:
     return sys.stdout.isatty()
 
 
-def _get_console(ctx: click.Context) -> Console:
-    """Build a Rich Console appropriate for the current context.
+def _echo_lines(
+    ctx: click.Context, lines: list[str], use_pager: bool = False
+) -> None:
+    """Output lines with Rich colors in TTY, plain text otherwise.
 
     Args:
-        ctx: Click context containing CLI options.
-
-    Returns:
-        A configured Rich Console instance.
+        ctx: Click context for color detection.
+        lines: List of strings that may contain Rich markup tags.
+        use_pager: Whether to pipe output through a pager in TTY mode.
     """
-    return Console(
-        force_terminal=_use_color(ctx),
-        color_system="truecolor" if _use_color(ctx) else None,
+    use_color = _use_color(ctx)
+    console = Console(
+        file=io.StringIO(), force_terminal=use_color, soft_wrap=True, record=True
     )
+    for line in lines:
+        console.print(line)
+    output = console.export_text(styles=use_color).rstrip("\n")
+    if use_pager and _use_pager(ctx):
+        os.environ.setdefault("LESS", "-R")
+        click.echo_via_pager(output)
+    else:
+        click.echo(output)
 
 
 def _resolve_exp_id(exman: ExMan, prefix: str) -> str:
@@ -246,36 +253,19 @@ def init(
     short_len = cfg_mgr.get("short_id_length", 8)
     short_id = exp.metadata.exp_id[:short_len]
 
-    if sys.stdout.isatty():
-        console = _get_console(ctx)
-        table = Table(show_header=False, box=None)
-        table.add_row("[bold]Experiment ID:[/bold]", short_id)
-        table.add_row("[bold]Path:[/bold]", str(exp.root))
-        table.add_row("[bold]Group:[/bold]", exp.metadata.group)
-        table.add_row("[bold]Git Hash:[/bold]", exp.metadata.git_hash or "N/A")
-        table.add_row("[bold]Status:[/bold]", exp.metadata.status)
-        if exp.metadata.git_dirty:
-            table.add_row(
-                "[bold yellow]Warning:[/bold yellow]",
-                "Working tree has uncommitted changes",
-            )
-
-        console.print(
-            Panel(
-                table,
-                title="[bold green]Experiment Initialized[/bold green]",
-                border_style="green",
-            )
+    lines: list[str] = [
+        "[bold green]Experiment Initialized[/bold green]",
+        f"[bold]Experiment ID:[/bold] {short_id}",
+        f"[bold]Path:[/bold] {exp.root}",
+        f"[bold]Group:[/bold] {exp.metadata.group}",
+        f"[bold]Git Hash:[/bold] {exp.metadata.git_hash or 'N/A'}",
+        f"[bold]Status:[/bold] {exp.metadata.status}",
+    ]
+    if exp.metadata.git_dirty:
+        lines.append(
+            "[bold yellow]Warning:[/bold yellow] Working tree has uncommitted changes"
         )
-    else:
-        click.echo("Experiment Initialized")
-        click.echo(f"Experiment ID: {short_id}")
-        click.echo(f"Path: {exp.root}")
-        click.echo(f"Group: {exp.metadata.group}")
-        click.echo(f"Git Hash: {exp.metadata.git_hash or 'N/A'}")
-        click.echo(f"Status: {exp.metadata.status}")
-        if exp.metadata.git_dirty:
-            click.echo("Warning: Working tree has uncommitted changes")
+    _echo_lines(ctx, lines)
 
 
 @cli.command()
@@ -348,31 +338,19 @@ def run(
         if parent is not None:
             env["KAI_EXMAN_PARENT_PATH"] = str(parent.root)
 
-    if sys.stdout.isatty():
-        console = _get_console(ctx)
-        if is_new and resume:
-            msg = (
-                f"[bold green]Creating new experiment {short_id} "
-                f"inherited from {resolved_id[:short_len]}.[/bold green]"
-            )
-        elif resume:
-            msg = (
-                f"[bold blue]Resuming experiment {short_id} "
-                f"(attempt {attempt_num}).[/bold blue]"
-            )
-        else:
-            msg = f"[bold green]Running experiment {short_id}.[/bold green]"
-        console.print(msg)
+    if is_new and resume:
+        msg = (
+            f"[bold green]Creating new experiment {short_id} "
+            f"inherited from {resolved_id[:short_len]}.[/bold green]"
+        )
+    elif resume:
+        msg = (
+            f"[bold blue]Resuming experiment {short_id} "
+            f"(attempt {attempt_num}).[/bold blue]"
+        )
     else:
-        if is_new and resume:
-            click.echo(
-                f"Creating new experiment {short_id} inherited from "
-                f"{resolved_id[:short_len]}."
-            )
-        elif resume:
-            click.echo(f"Resuming experiment {short_id} (attempt {attempt_num}).")
-        else:
-            click.echo(f"Running experiment {short_id}.")
+        msg = f"[bold green]Running experiment {short_id}.[/bold green]"
+    _echo_lines(ctx, [msg])
 
     # Execute the command
     result = subprocess.run(command, env=env)
@@ -511,20 +489,13 @@ def list_cmd(
 
     if tree:
         roots, children_map = _build_lineage(experiments)
-        if _use_pager(ctx):
-            _render_tree_rich(roots, children_map, full_id, short_len)
-        else:
-            _render_tree_plain(roots, children_map, full_id, short_len)
+        lines = _build_tree_lines(roots, children_map, full_id, short_len)
     elif oneline:
-        if _use_pager(ctx):
-            _render_oneline_rich(experiments, full_id, short_len, metric_sort)
-        else:
-            _render_oneline_plain(experiments, full_id, short_len, metric_sort)
+        lines = _build_oneline_lines(experiments, full_id, short_len, metric_sort)
     else:
-        if _use_pager(ctx):
-            _render_log_rich(experiments, full_id, short_len, metric_sort)
-        else:
-            _render_log_plain(experiments, full_id, short_len, metric_sort)
+        lines = _build_log_lines(experiments, full_id, short_len, metric_sort)
+
+    _echo_lines(ctx, lines, use_pager=True)
 
 
 _STATUS_COLORS = {
@@ -679,35 +650,36 @@ def _build_lineage(
     return roots, children_map
 
 
-def _render_log_rich(
+def _build_log_lines(
     experiments: list[Experiment],
     full_id: bool,
     short_len: int,
     metric_sort: tuple[str, str, dict[str, float]] | None = None,
-) -> None:
-    """Render experiment list in git-log style with Rich.
+) -> list[str]:
+    """Build git-log-style lines for experiment list.
 
     Args:
         experiments: List of experiments to render.
         full_id: Whether to display full 16-character IDs.
         short_len: Number of characters for abbreviated IDs.
         metric_sort: Optional (name, order, exp_id->score) tuple.
-    """
-    console = Console(file=io.StringIO(), force_terminal=True, record=True)
 
+    Returns:
+        List of markup strings representing the log view.
+    """
+    lines: list[str] = []
     for exp in experiments:
         status_color = _STATUS_COLORS.get(exp.metadata.status, "white")
         dt = _format_dt(exp.metadata.timestamp)
         desc = exp.metadata.description or ""
         params = _params_line(exp.config)
 
-        # Header: experiment <hash> (tag: ...) [status]
         tag_part = ""
         if exp.metadata.tags:
             tags_display = ", ".join(exp.metadata.tags)
             tag_part = f" [magenta](tag: {tags_display})[/magenta]"
         disp_id = _display_id(exp.metadata.exp_id, full_id, short_len)
-        console.print(
+        lines.append(
             f"[yellow]experiment {disp_id}[/yellow]"
             f"{tag_part}"
             f" [[{status_color}]{exp.metadata.status}[/{status_color}]]"
@@ -715,20 +687,16 @@ def _render_log_rich(
 
         if exp.metadata.parent_id:
             parent_short = exp.metadata.parent_id[:short_len]
-            console.print(f"[dim]Parent: {parent_short}[/dim]")
+            lines.append(f"[dim]Parent: {parent_short}[/dim]")
 
-        # Metadata
-        console.print(f"Author: {getpass.getuser()}")
-        console.print(f"Date:   {dt}  |  Group: {exp.metadata.group}")
-
-        # Body
-        console.print("")
+        lines.append(f"Author: {getpass.getuser()}")
+        lines.append(f"Date:   {dt}  |  Group: {exp.metadata.group}")
+        lines.append("")
         if desc:
-            console.print(desc)
+            lines.append(desc)
         else:
-            console.print("[dim](No description provided)[/dim]")
+            lines.append("[dim](No description provided)[/dim]")
 
-        # Footer: params / score
         footer_parts = []
         if params:
             footer_parts.append(f"Params: [blue]{params}[/blue]")
@@ -738,88 +706,31 @@ def _render_log_rich(
             score_str = f"{score:.4f}" if score is not None else "-"
             footer_parts.append(f"[yellow]{name}={score_str}[/yellow]")
         if footer_parts:
-            console.print("")
-            console.print(" | ".join(footer_parts))
+            lines.append("")
+            lines.append(" | ".join(footer_parts))
 
-        # Blank line between experiments
-        console.print("")
-
-    text = console.export_text(styles=True)
-    os.environ.setdefault("LESS", "-R")
-    click.echo_via_pager(text)
+        lines.append("")
+    return lines
 
 
-def _render_log_plain(
+def _build_oneline_lines(
     experiments: list[Experiment],
     full_id: bool,
     short_len: int,
     metric_sort: tuple[str, str, dict[str, float]] | None = None,
-) -> None:
-    """Render experiment list in git-log style as plain text.
+) -> list[str]:
+    """Build compact one-line format for experiment list.
 
     Args:
         experiments: List of experiments to render.
         full_id: Whether to display full 16-character IDs.
         short_len: Number of characters for abbreviated IDs.
         metric_sort: Optional (name, order, exp_id->score) tuple.
+
+    Returns:
+        List of markup strings representing the oneline view.
     """
-    for exp in experiments:
-        dt = _format_dt(exp.metadata.timestamp)
-        desc = exp.metadata.description or ""
-        params = _params_line(exp.config)
-
-        # Header
-        tag_part = ""
-        if exp.metadata.tags:
-            tags_display = ", ".join(exp.metadata.tags)
-            tag_part = f" (tag: {tags_display})"
-        disp_id = _display_id(exp.metadata.exp_id, full_id, short_len)
-        status_part = f"[{exp.metadata.status}]"
-        click.echo(f"experiment {disp_id}{tag_part} {status_part}")
-
-        if exp.metadata.parent_id:
-            parent_short = exp.metadata.parent_id[:short_len]
-            click.echo(f"Parent: {parent_short}")
-
-        click.echo(f"Author: {getpass.getuser()}")
-        click.echo(f"Date:   {dt}  |  Group: {exp.metadata.group}")
-        click.echo("")
-        if desc:
-            click.echo(desc)
-        else:
-            click.echo("(No description provided)")
-
-        footer_parts = []
-        if params:
-            footer_parts.append(f"Params: {params}")
-        if metric_sort:
-            name, _order, scores = metric_sort
-            score = scores.get(exp.metadata.exp_id)
-            score_str = f"{score:.4f}" if score is not None else "-"
-            footer_parts.append(f"{name}={score_str}")
-        if footer_parts:
-            click.echo("")
-            click.echo(" | ".join(footer_parts))
-
-        click.echo("")
-
-
-def _render_oneline_rich(
-    experiments: list[Experiment],
-    full_id: bool,
-    short_len: int,
-    metric_sort: tuple[str, str, dict[str, float]] | None = None,
-) -> None:
-    """Render experiment list in compact one-line format with Rich.
-
-    Args:
-        experiments: List of experiments to render.
-        full_id: Whether to display full 16-character IDs.
-        short_len: Number of characters for abbreviated IDs.
-        metric_sort: Optional (name, order, exp_id->score) tuple.
-    """
-    console = Console(file=io.StringIO(), force_terminal=True, record=True)
-
+    lines: list[str] = []
     for exp in experiments:
         status_color = _STATUS_COLORS.get(exp.metadata.status, "white")
         status_label = exp.metadata.status.upper()
@@ -832,7 +743,7 @@ def _render_oneline_rich(
         tags_part = ""
         if exp.metadata.tags:
             tags = ", ".join(exp.metadata.tags)
-            tags_part = f"[magenta][{tags}][/magenta]  "
+            tags_part = f"[magenta]{tags}[/magenta]  "
 
         line = (
             f"[yellow]{disp_id:{id_width}}[/yellow]  "
@@ -848,69 +759,28 @@ def _render_oneline_rich(
             score_str = f"{score:.4f}" if score is not None else "-"
             line += f"  [{name}={score_str}]"
 
-        console.print(line)
-
-    text = console.export_text(styles=True)
-    os.environ.setdefault("LESS", "-R")
-    click.echo_via_pager(text)
+        lines.append(line)
+    return lines
 
 
-def _render_oneline_plain(
-    experiments: list[Experiment],
-    full_id: bool,
-    short_len: int,
-    metric_sort: tuple[str, str, dict[str, float]] | None = None,
-) -> None:
-    """Render experiment list in compact one-line format as plain text.
-
-    Args:
-        experiments: List of experiments to render.
-        full_id: Whether to display full 16-character IDs.
-        short_len: Number of characters for abbreviated IDs.
-        metric_sort: Optional (name, order, exp_id->score) tuple.
-    """
-    for exp in experiments:
-        status_label = exp.metadata.status.upper()
-        disp_id = _display_id(exp.metadata.exp_id, full_id, short_len)
-        dt = _oneline_dt(exp.metadata.timestamp)
-        id_width = 16 if full_id else short_len
-
-        desc = exp.metadata.description or "(no description)"
-
-        tags_part = ""
-        if exp.metadata.tags:
-            tags = ", ".join(exp.metadata.tags)
-            tags_part = f"[{tags}]  "
-
-        line = (
-            f"{disp_id:{id_width}}  {dt:16}  {status_label:8}  "
-            f"{exp.metadata.group:10}  {tags_part}{desc}"
-        )
-
-        if metric_sort:
-            name, _order, scores = metric_sort
-            score = scores.get(exp.metadata.exp_id)
-            score_str = f"{score:.4f}" if score is not None else "-"
-            line += f"  [{name}={score_str}]"
-
-        click.echo(line)
-
-
-def _render_tree_rich(
+def _build_tree_lines(
     roots: list[Experiment],
     children_map: dict[str, list[Experiment]],
     full_id: bool,
     short_len: int,
-) -> None:
-    """Render experiment lineage tree with Rich.
+) -> list[str]:
+    """Build experiment lineage tree lines.
 
     Args:
         roots: Root experiments (no parent in the set).
         children_map: Maps parent_id to child experiments.
         full_id: Whether to display full 16-character IDs.
         short_len: Number of characters for abbreviated IDs.
+
+    Returns:
+        List of markup strings representing the tree view.
     """
-    console = Console(file=io.StringIO(), force_terminal=True, record=True)
+    lines: list[str] = []
 
     def _render_node(
         exp: Experiment,
@@ -924,62 +794,15 @@ def _render_tree_rich(
         desc = exp.metadata.description or "[dim](no description)[/dim]"
 
         if is_root:
-            connector = "[bold]●[/bold]"
+            connector = "*"
         else:
-            connector = "└── ○" if is_last else "├── ○"
+            connector = "`-- o" if is_last else "|-- o"
 
         line = (
             f"{prefix}{connector} [yellow]{disp_id}[/yellow]  "
             f"[{status_color}]{status_label}[/{status_color}]  {desc}"
         )
-        console.print(line)
-
-        children = children_map.get(exp.metadata.exp_id, [])
-        for i, child in enumerate(children):
-            child_is_last = i == len(children) - 1
-            child_prefix = prefix + ("    " if is_last else "│   ")
-            _render_node(child, child_prefix, child_is_last, is_root=False)
-
-    for root in roots:
-        _render_node(root, "", is_last=True, is_root=True)
-        console.print("")
-
-    text = console.export_text(styles=True)
-    os.environ.setdefault("LESS", "-R")
-    click.echo_via_pager(text)
-
-
-def _render_tree_plain(
-    roots: list[Experiment],
-    children_map: dict[str, list[Experiment]],
-    full_id: bool,
-    short_len: int,
-) -> None:
-    """Render experiment lineage tree as plain text.
-
-    Args:
-        roots: Root experiments (no parent in the set).
-        children_map: Maps parent_id to child experiments.
-        full_id: Whether to display full 16-character IDs.
-        short_len: Number of characters for abbreviated IDs.
-    """
-
-    def _render_node(
-        exp: Experiment,
-        prefix: str,
-        is_last: bool,
-        is_root: bool,
-    ) -> None:
-        status_label = exp.metadata.status.upper()
-        disp_id = _display_id(exp.metadata.exp_id, full_id, short_len)
-        desc = exp.metadata.description or "(no description)"
-
-        if is_root:
-            connector = "*"
-        else:
-            connector = "`-- o" if is_last else "|-- o"
-
-        click.echo(f"{prefix}{connector} {disp_id}  {status_label}  {desc}")
+        lines.append(line)
 
         children = children_map.get(exp.metadata.exp_id, [])
         for i, child in enumerate(children):
@@ -989,7 +812,9 @@ def _render_tree_plain(
 
     for root in roots:
         _render_node(root, "", is_last=True, is_root=True)
-        click.echo("")
+        lines.append("")
+
+    return lines
 
 
 @cli.command()
@@ -1014,21 +839,11 @@ def finish(ctx: click.Context, exp_id: str, status: str, notes: str) -> None:
     short_len = cfg_mgr.get("short_id_length", 8)
     short_id = exp.metadata.exp_id[:short_len]
 
-    if sys.stdout.isatty():
-        console = _get_console(ctx)
-        console.print(
-            Panel(
-                f"[bold green]Experiment {short_id} finished.[/bold green]\n"
-                f"Status: {status}\n"
-                f"Summary written to: {exp.root / 'summary.md'}",
-                title="Finish",
-                border_style="green",
-            )
-        )
-    else:
-        click.echo(f"Experiment {short_id} finished.")
-        click.echo(f"Status: {status}")
-        click.echo(f"Summary written to: {exp.root / 'summary.md'}")
+    _echo_lines(ctx, [
+        f"[bold green]Experiment {short_id} finished.[/bold green]",
+        f"Status: {status}",
+        f"Summary written to: {exp.root / 'summary.md'}",
+    ])
 
 
 @cli.command()
@@ -1057,127 +872,52 @@ def show(ctx: click.Context, exp_id: str, full_id: bool) -> None:
     short_len = cfg_mgr.get("short_id_length", 8)
     disp_id = _display_id(exp.metadata.exp_id, full_id, short_len)
 
-    if sys.stdout.isatty():
-        console = _get_console(ctx)
+    lines: list[str] = [
+        f"[bold cyan]ID:[/bold cyan] {disp_id}",
+        f"[bold cyan]Group:[/bold cyan] {exp.metadata.group}",
+        f"[bold cyan]Status:[/bold cyan] {exp.metadata.status}",
+        f"[bold cyan]Description:[/bold cyan] {exp.metadata.description or '-'}",
+        f"[bold cyan]Data Version:[/bold cyan] {exp.metadata.data_version or '-'}",
+        f"[bold cyan]Git Hash:[/bold cyan] {exp.metadata.git_hash or 'N/A'}",
+        f"[bold cyan]Git Dirty:[/bold cyan] {exp.metadata.git_dirty}",
+    ]
+    if exp.metadata.parent_id:
+        parent_disp = _display_id(exp.metadata.parent_id, full_id, short_len)
+        lines.append(f"[bold cyan]Parent:[/bold cyan] {parent_disp}")
+    lines.append(f"[bold cyan]Path:[/bold cyan] {exp.root}")
+    lines.append("")
 
-        meta_table = Table(show_header=False, box=None)
-        meta_table.add_row("[bold]ID[/bold]", disp_id)
-        meta_table.add_row("[bold]Group[/bold]", exp.metadata.group)
-        meta_table.add_row("[bold]Status[/bold]", exp.metadata.status)
-        meta_table.add_row("[bold]Description[/bold]", exp.metadata.description or "-")
-        meta_table.add_row(
-            "[bold]Data Version[/bold]", exp.metadata.data_version or "-"
-        )
-        meta_table.add_row("[bold]Git Hash[/bold]", exp.metadata.git_hash or "N/A")
-        meta_table.add_row("[bold]Git Dirty[/bold]", str(exp.metadata.git_dirty))
-        if exp.metadata.parent_id:
-            parent_disp = _display_id(
-                exp.metadata.parent_id, full_id, short_len
-            )
-            meta_table.add_row("[bold]Parent[/bold]", parent_disp)
-        meta_table.add_row("[bold]Path[/bold]", str(exp.root))
-
-        meta_panel = Panel(
-            meta_table, title="[bold cyan]Metadata[/bold cyan]", border_style="cyan"
-        )
-
-        if exp.config:
-            cfg_table = Table(show_header=False, box=None)
-            for key, value in exp.config.items():
-                cfg_table.add_row(f"[bold]{key}[/bold]", str(value))
-            cfg_panel = Panel(
-                cfg_table, title="[bold blue]Config[/bold blue]", border_style="blue"
-            )
-        else:
-            cfg_panel = Panel(
-                "[dim]No config recorded.[/dim]",
-                title="[bold blue]Config[/bold blue]",
-                border_style="blue",
-            )
-
-        if best_metrics:
-            metrics_table = Table(show_header=True, header_style="bold magenta")
-            metrics_table.add_column("Metric")
-            metrics_table.add_column("Best (Max)", justify="right")
-            metrics_table.add_column("Worst (Min)", justify="right")
-            for key, vals in best_metrics.items():
-                metrics_table.add_row(key, f"{vals['max']:.6f}", f"{vals['min']:.6f}")
-            metrics_panel = Panel(
-                metrics_table,
-                title="[bold magenta]Best Metrics[/bold magenta]",
-                border_style="magenta",
-            )
-        else:
-            metrics_panel = Panel(
-                "[dim]No metrics recorded.[/dim]",
-                title="[bold magenta]Best Metrics[/bold magenta]",
-                border_style="magenta",
-            )
-
-        panels = [meta_panel, cfg_panel, metrics_panel]
-
-        if exp.metadata.attempts:
-            attempts_table = Table(show_header=True, header_style="bold yellow")
-            attempts_table.add_column("Run")
-            attempts_table.add_column("Start")
-            attempts_table.add_column("End")
-            attempts_table.add_column("Status")
-            for att in exp.metadata.attempts:
-                name = att.reason or f"run_{att.sequence}"
-                attempts_table.add_row(
-                    name,
-                    att.start_time[:19] if att.start_time else "-",
-                    att.end_time[:19] if att.end_time else "-",
-                    att.status,
-                )
-            attempts_panel = Panel(
-                attempts_table,
-                title="[bold yellow]Attempts[/bold yellow]",
-                border_style="yellow",
-            )
-            panels.append(attempts_panel)
-
-        for panel in panels:
-            console.print(panel)
+    if exp.config:
+        lines.append("[bold blue]Config:[/bold blue]")
+        for key, value in exp.config.items():
+            lines.append(f"  {key}: {value}")
     else:
-        click.echo(f"ID: {disp_id}")
-        click.echo(f"Group: {exp.metadata.group}")
-        click.echo(f"Status: {exp.metadata.status}")
-        click.echo(f"Description: {exp.metadata.description or '-'}")
-        click.echo(f"Data Version: {exp.metadata.data_version or '-'}")
-        click.echo(f"Git Hash: {exp.metadata.git_hash or 'N/A'}")
-        click.echo(f"Git Dirty: {exp.metadata.git_dirty}")
-        if exp.metadata.parent_id:
-            click.echo(f"Parent: {exp.metadata.parent_id[:short_len]}")
-        click.echo(f"Path: {exp.root}")
-        click.echo("")
-        if exp.config:
-            click.echo("Config:")
-            for key, value in exp.config.items():
-                click.echo(f"  {key}: {value}")
-        else:
-            click.echo("Config: No config recorded.")
-        click.echo("")
-        if best_metrics:
-            click.echo("Best Metrics:")
-            click.echo(f"{'Metric':<20} {'Best (Max)':>12} {'Worst (Min)':>12}")
-            for key, vals in best_metrics.items():
-                click.echo(f"{key:<20} {vals['max']:>12.6f} {vals['min']:>12.6f}")
-        else:
-            click.echo("Best Metrics: No metrics recorded.")
-        if exp.metadata.attempts:
-            click.echo("")
-            click.echo("Attempts:")
-            click.echo(
-                f"{'Run':<10} {'Start':<20} {'End':<20} {'Status'}"
+        lines.append("[dim]Config: No config recorded.[/dim]")
+    lines.append("")
+
+    if best_metrics:
+        lines.append("[bold magenta]Best Metrics:[/bold magenta]")
+        lines.append(
+            f"{'Metric':<20} {'Best (Max)':>12} {'Worst (Min)':>12}"
+        )
+        for key, vals in best_metrics.items():
+            lines.append(
+                f"{key:<20} {vals['max']:>12.6f} {vals['min']:>12.6f}"
             )
-            for att in exp.metadata.attempts:
-                name = att.reason or f"run_{att.sequence}"
-                start = att.start_time[:19] if att.start_time else "-"
-                end = att.end_time[:19] if att.end_time else "-"
-                click.echo(
-                    f"{name:<10} {start:<20} {end:<20} {att.status}"
-                )
+    else:
+        lines.append("[dim]Best Metrics: No metrics recorded.[/dim]")
+
+    if exp.metadata.attempts:
+        lines.append("")
+        lines.append("[bold yellow]Attempts:[/bold yellow]")
+        lines.append(f"{'Run':<10} {'Start':<20} {'End':<20} {'Status'}")
+        for att in exp.metadata.attempts:
+            name = att.reason or f"run_{att.sequence}"
+            start = att.start_time[:19] if att.start_time else "-"
+            end = att.end_time[:19] if att.end_time else "-"
+            lines.append(f"{name:<10} {start:<20} {end:<20} {att.status}")
+
+    _echo_lines(ctx, lines)
 
 
 @cli.command(name="tag")
@@ -1210,11 +950,10 @@ def tag_cmd(
 
     short_len = cfg_mgr.get("short_id_length", 8)
     short_id = resolved_id[:short_len]
-    if sys.stdout.isatty():
-        console = _get_console(ctx)
-        console.print(f"[bold green]Tag '{tag_name}' {action} {short_id}.[/bold green]")
-    else:
-        click.echo(f"Tag '{tag_name}' {action} {short_id}.")
+    _echo_lines(
+        ctx,
+        [f"[bold green]Tag '{tag_name}' {action} {short_id}.[/bold green]"],
+    )
 
 
 @cli.command()
@@ -1240,35 +979,23 @@ def tags(ctx: click.Context, group: str | None) -> None:
         click.echo("No tags found.")
         return
 
-    if sys.stdout.isatty():
-        console = _get_console(ctx)
-        table = Table(show_header=True, header_style="bold")
-        table.add_column("Tag", style="magenta")
-        table.add_column("Count", style="blue", justify="right")
+    lines: list[str] = []
+    header = f"[bold]{'Tag':<20} {'Count':>5}[/bold]"
+    if group is None:
+        header += "  [bold]Groups[/bold]"
+    lines.append(header)
+
+    for tag in sorted(tag_counts.keys()):
+        count = tag_counts[tag]
         if group is None:
-            table.add_column("Groups")
+            group_parts = [
+                f"{g}({c})" for g, c in sorted(tag_groups[tag].items())
+            ]
+            lines.append(f"{tag:<20} {count:>5}  {', '.join(group_parts)}")
+        else:
+            lines.append(f"{tag:<20} {count:>5}")
 
-        for tag in sorted(tag_counts.keys()):
-            count = tag_counts[tag]
-            if group is None:
-                group_parts = [
-                    f"{g}({c})" for g, c in sorted(tag_groups[tag].items())
-                ]
-                table.add_row(tag, str(count), ", ".join(group_parts))
-            else:
-                table.add_row(tag, str(count))
-
-        console.print(table)
-    else:
-        for tag in sorted(tag_counts.keys()):
-            count = tag_counts[tag]
-            if group is None:
-                group_parts = [
-                    f"{g}:{c}" for g, c in sorted(tag_groups[tag].items())
-                ]
-                click.echo(f"{tag:<20} {count:>3}  {', '.join(group_parts)}")
-            else:
-                click.echo(f"{tag:<20} {count:>3}")
+    _echo_lines(ctx, lines)
 
 
 @cli.command()
@@ -1289,14 +1016,13 @@ def move(ctx: click.Context, exp_id: str, group: str) -> None:
 
     short_len = cfg_mgr.get("short_id_length", 8)
     short_id = exp.metadata.exp_id[:short_len]
-    if sys.stdout.isatty():
-        console = _get_console(ctx)
-        console.print(
+    _echo_lines(
+        ctx,
+        [
             f"[bold green]Experiment {short_id} moved to group "
             f"'{exp.metadata.group}'.[/bold green]"
-        )
-    else:
-        click.echo(f"Experiment {short_id} moved to group '{exp.metadata.group}'.")
+        ],
+    )
 
 
 @cli.command()
@@ -1334,32 +1060,20 @@ def suggest_groups(
         click.echo("No group suggestions above the similarity threshold.")
         return
 
-    if sys.stdout.isatty():
-        console = _get_console(ctx)
-        table = Table(show_header=True, header_style="bold")
-        table.add_column("Experiment")
-        table.add_column("Current Group")
-        table.add_column("Suggested Group")
-        table.add_column("Similarity")
+    lines: list[str] = []
+    lines.append(
+        f"[bold]{'Experiment':<12} {'Current':<12} {'Suggested':<12} "
+        f"Similarity[/bold]"
+    )
+    short_len = cfg_mgr.get("short_id_length", 8)
+    for exp, suggested_group, score in suggestions:
+        short_id = exp.metadata.exp_id[:short_len]
+        lines.append(
+            f"{short_id:<12} {exp.metadata.group:<12} {suggested_group:<12} "
+            f"{score:.2f}"
+        )
 
-        for exp, suggested_group, score in suggestions:
-            short_len = cfg_mgr.get("short_id_length", 8)
-            short_id = exp.metadata.exp_id[:short_len]
-            table.add_row(
-                short_id,
-                exp.metadata.group,
-                suggested_group,
-                f"{score:.2f}",
-            )
-        console.print(table)
-    else:
-        short_len = cfg_mgr.get("short_id_length", 8)
-        for exp, suggested_group, score in suggestions:
-            short_id = exp.metadata.exp_id[:short_len]
-            click.echo(
-                f"{short_id}  {exp.metadata.group} -> {suggested_group}  "
-                f"({score:.2f})"
-            )
+    _echo_lines(ctx, lines)
 
     if apply:
         if not sys.stdout.isatty():
