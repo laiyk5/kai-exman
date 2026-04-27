@@ -1254,18 +1254,29 @@ def show(ctx: click.Context, exp_id: str | None, full_id: bool) -> None:
 @cli.command(name="tag")
 @click.argument("args", nargs=-1)
 @click.option("--delete", "-d", is_flag=True, help="Remove the tag")
+@click.option("--list", "-l", is_flag=True, help="List all tags with counts")
+@click.option("--group", help="Filter tags to a specific group")
 @click.pass_context
 def tag_cmd(
     ctx: click.Context,
     args: tuple[str, ...],
     delete: bool,
+    list: bool,
+    group: str | None,
 ) -> None:
-    """Add or remove a tag on an experiment.
+    """Add, remove, or list tags.
 
     Usage:
-        kai-exman tag <tag_name>
-        kai-exman tag <exp_id> <tag_name>
+        kai-exman tag <tag_name>              # add tag to default experiment
+        kai-exman tag <exp_id> <tag_name>     # add tag to specific experiment
+        kai-exman tag -d <tag_name>           # remove tag
+        kai-exman tag -l                      # list all tags
+        kai-exman tag -l --group <group>      # list tags in a group
     """
+    if list:
+        _list_tags(ctx, group)
+        return
+
     if len(args) == 1:
         tag_name = args[0]
         exp_id: str | None = None
@@ -1301,10 +1312,7 @@ def tag_cmd(
     )
 
 
-@cli.command()
-@click.option("--group", help="Filter tags to a specific group")
-@click.pass_context
-def tags(ctx: click.Context, group: str | None) -> None:
+def _list_tags(ctx: click.Context, group: str | None) -> None:
     """List all tags across experiments, optionally filtered by group."""
     exman = ExMan(root=ctx.obj["path"])
     experiments = exman.list(group=group)
@@ -1340,7 +1348,7 @@ def tags(ctx: click.Context, group: str | None) -> None:
         else:
             lines.append(f"{tag:<20} {count:>5}")
 
-    _echo_lines(ctx, lines)
+    _echo_lines(ctx, lines, use_pager=True)
 
 
 @cli.command()
