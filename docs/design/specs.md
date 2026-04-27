@@ -50,7 +50,7 @@ _TAG_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 ### Constraints
 
 | Rule | Description |
-|---|---|
+| --- | --- |
 | First character | Must be alphanumeric (`a-z`, `A-Z`, `0-9`) |
 | Subsequent characters | Alphanumeric, dot (`.`), underscore (`_`), or hyphen (`-`) |
 | Prohibited | Spaces, slashes, emoji, shell metacharacters, commas |
@@ -89,7 +89,7 @@ class Metadata(BaseModel):
 Experiments transition through the following statuses:
 
 | Status | Meaning | How Set |
-|---|---|---|
+| --- | --- | --- |
 | `running` | Experiment is active. | Default at initialization. |
 | `finished` | Experiment was closed via `finish()` with default status. | `kai-exman finish <exp_id>` |
 | `success` | Experiment completed successfully. | `kai-exman finish <exp_id> -s success` |
@@ -124,12 +124,10 @@ Follow Git's minimalist and industrial aesthetic. No unnecessary borders, no fla
 
 ### TTY Detection
 
-The `list` command checks `sys.stdout.isatty()` and adapts its output:
+All commands check `sys.stdout.isatty()` and adapt their output:
 
-- **For Humans (TTY)**: Uses `rich` for colors, panels, and tables. Pipes long output through a pager (`less -R`).
+- **For Humans (TTY)**: Uses `rich` for colors, panels, and tables. `list` pipes long output through a pager (`less -R`).
 - **For Agents / Pipes**: Outputs clean plain text without ANSI codes or decorative framing.
-
-Other commands (`init`, `show`, `finish`, `tag`) always render through `rich` but disable color when stdout is not a TTY. Panel and table borders remain in plain text for structural clarity.
 
 ### Layout Standards
 
@@ -140,7 +138,7 @@ Other commands (`init`, `show`, `finish`, `tag`) always render through `rich` bu
 ### Color Coding
 
 | Element | Color | Usage |
-|---|---|---|
+| --- | --- | --- |
 | Experiment ID | Yellow | Header line in `list` and `show` |
 | Tags | Magenta | Inline tag display |
 | Success | Green | Status label |
@@ -185,7 +183,7 @@ Where `<safe_tags_or_description>` is sanitized to ASCII alphanumeric, underscor
 All commands accept:
 
 | Option | Description |
-|---|---|
+| --- | --- |
 | `--path` | Root path for experiments. Defaults to `EXMAN_PATH` env or `./outputs`. |
 | `--no-pager` | Disable pager (auto-detected when not a TTY). |
 | `--no-color` | Disable colored output (auto-detected when not a TTY). |
@@ -201,7 +199,7 @@ kai-exman init [--description TEXT] [--tags TAGS] [--config PATH]
 ```
 
 | Option | Description |
-|---|---|
+| --- | --- |
 | `-d, --description` | Human-readable experiment description. |
 | `-t, --tags` | Comma-separated tags. Empty entries are rejected. |
 | `-c, --config` | Path to a YAML configuration file to copy into the experiment. |
@@ -215,7 +213,7 @@ kai-exman list [--sort-by METRIC] [--order {asc,desc}] [--top N] [--oneline] [--
 ```
 
 | Option | Description |
-|---|---|
+| --- | --- |
 | `--sort-by` | Metric name to sort by (e.g. `acc`, `loss`). |
 | `--order` | `asc` (min first) or `desc` (max first, default). |
 | `--top` | Show only the top N experiments. |
@@ -232,7 +230,7 @@ kai-exman show [--full-id] EXP_ID
 ```
 
 | Option | Description |
-|---|---|
+| --- | --- |
 | `--full-id` | Display the full 16-character experiment ID in the metadata panel. |
 | `EXP_ID` | Full ID or unambiguous prefix of the experiment to show. |
 
@@ -245,7 +243,7 @@ kai-exman finish [--status STATUS] [--notes NOTES] EXP_ID
 ```
 
 | Option | Description |
-|---|---|
+| --- | --- |
 | `-s, --status` | Final status (default: `finished`). |
 | `-n, --notes` | Post-mortem notes included in the summary. |
 | `EXP_ID` | Full ID or unambiguous prefix of the experiment to finish. |
@@ -259,7 +257,7 @@ kai-exman tag [--delete] EXP_ID TAG_NAME
 ```
 
 | Option | Description |
-|---|---|
+| --- | --- |
 | `-d, --delete` | Remove the tag instead of adding it. |
 | `EXP_ID` | Full ID or unambiguous prefix of the experiment. |
 | `TAG_NAME` | Tag to add or remove. Must pass `validate_tag()`. |

@@ -185,25 +185,34 @@ def init(ctx: click.Context, description: str, tags: str, config: str | None) ->
     exman = ExMan(root=ctx.obj["path"])
     exp = exman.init(description=description, tags=tag_list, config=cfg)
 
-    console = _get_console(ctx)
-    table = Table(show_header=False, box=None)
-    table.add_row("[bold]Experiment ID:[/bold]", exp.metadata.exp_id[:8])
-    table.add_row("[bold]Path:[/bold]", str(exp.root))
-    table.add_row("[bold]Git Hash:[/bold]", exp.metadata.git_hash or "N/A")
-    table.add_row("[bold]Status:[/bold]", exp.metadata.status)
-    if exp.metadata.git_dirty:
-        table.add_row(
-            "[bold yellow]Warning:[/bold yellow]",
-            "Working tree has uncommitted changes",
-        )
+    if sys.stdout.isatty():
+        console = _get_console(ctx)
+        table = Table(show_header=False, box=None)
+        table.add_row("[bold]Experiment ID:[/bold]", exp.metadata.exp_id[:8])
+        table.add_row("[bold]Path:[/bold]", str(exp.root))
+        table.add_row("[bold]Git Hash:[/bold]", exp.metadata.git_hash or "N/A")
+        table.add_row("[bold]Status:[/bold]", exp.metadata.status)
+        if exp.metadata.git_dirty:
+            table.add_row(
+                "[bold yellow]Warning:[/bold yellow]",
+                "Working tree has uncommitted changes",
+            )
 
-    console.print(
-        Panel(
-            table,
-            title="[bold green]Experiment Initialized[/bold green]",
-            border_style="green",
+        console.print(
+            Panel(
+                table,
+                title="[bold green]Experiment Initialized[/bold green]",
+                border_style="green",
+            )
         )
-    )
+    else:
+        click.echo("Experiment Initialized")
+        click.echo(f"Experiment ID: {exp.metadata.exp_id[:8]}")
+        click.echo(f"Path: {exp.root}")
+        click.echo(f"Git Hash: {exp.metadata.git_hash or 'N/A'}")
+        click.echo(f"Status: {exp.metadata.status}")
+        if exp.metadata.git_dirty:
+            click.echo("Warning: Working tree has uncommitted changes")
 
 
 @cli.command(name="list")
@@ -545,17 +554,23 @@ def finish(ctx: click.Context, exp_id: str, status: str, notes: str) -> None:
     if exp is None:
         raise click.ClickException(f"Experiment '{resolved_id}' not found.")
 
-    console = _get_console(ctx)
-    short_id = exp.metadata.exp_id[:8]
-    console.print(
-        Panel(
-            f"[bold green]Experiment {short_id} finished.[/bold green]\n"
-            f"Status: {status}\n"
-            f"Summary written to: {exp.root / 'summary.md'}",
-            title="Finish",
-            border_style="green",
+    if sys.stdout.isatty():
+        console = _get_console(ctx)
+        short_id = exp.metadata.exp_id[:8]
+        console.print(
+            Panel(
+                f"[bold green]Experiment {short_id} finished.[/bold green]\n"
+                f"Status: {status}\n"
+                f"Summary written to: {exp.root / 'summary.md'}",
+                title="Finish",
+                border_style="green",
+            )
         )
-    )
+    else:
+        short_id = exp.metadata.exp_id[:8]
+        click.echo(f"Experiment {short_id} finished.")
+        click.echo(f"Status: {status}")
+        click.echo(f"Summary written to: {exp.root / 'summary.md'}")
 
 
 @cli.command()
@@ -580,58 +595,85 @@ def show(ctx: click.Context, exp_id: str, full_id: bool) -> None:
         raise click.ClickException(f"Experiment '{resolved_id}' not found.")
 
     best_metrics = exp.compute_best_metrics()
-    console = _get_console(ctx)
-
-    meta_table = Table(show_header=False, box=None)
     disp_id = _display_id(exp.metadata.exp_id, full_id)
-    meta_table.add_row("[bold]ID[/bold]", disp_id)
-    meta_table.add_row("[bold]Status[/bold]", exp.metadata.status)
-    meta_table.add_row("[bold]Description[/bold]", exp.metadata.description or "-")
-    meta_table.add_row("[bold]Data Version[/bold]", exp.metadata.data_version or "-")
-    meta_table.add_row("[bold]Git Hash[/bold]", exp.metadata.git_hash or "N/A")
-    meta_table.add_row("[bold]Git Dirty[/bold]", str(exp.metadata.git_dirty))
-    meta_table.add_row("[bold]Path[/bold]", str(exp.root))
 
-    meta_panel = Panel(
-        meta_table, title="[bold cyan]Metadata[/bold cyan]", border_style="cyan"
-    )
+    if sys.stdout.isatty():
+        console = _get_console(ctx)
 
-    if exp.config:
-        cfg_table = Table(show_header=False, box=None)
-        for key, value in exp.config.items():
-            cfg_table.add_row(f"[bold]{key}[/bold]", str(value))
-        cfg_panel = Panel(
-            cfg_table, title="[bold blue]Config[/bold blue]", border_style="blue"
+        meta_table = Table(show_header=False, box=None)
+        meta_table.add_row("[bold]ID[/bold]", disp_id)
+        meta_table.add_row("[bold]Status[/bold]", exp.metadata.status)
+        meta_table.add_row("[bold]Description[/bold]", exp.metadata.description or "-")
+        meta_table.add_row(
+            "[bold]Data Version[/bold]", exp.metadata.data_version or "-"
         )
+        meta_table.add_row("[bold]Git Hash[/bold]", exp.metadata.git_hash or "N/A")
+        meta_table.add_row("[bold]Git Dirty[/bold]", str(exp.metadata.git_dirty))
+        meta_table.add_row("[bold]Path[/bold]", str(exp.root))
+
+        meta_panel = Panel(
+            meta_table, title="[bold cyan]Metadata[/bold cyan]", border_style="cyan"
+        )
+
+        if exp.config:
+            cfg_table = Table(show_header=False, box=None)
+            for key, value in exp.config.items():
+                cfg_table.add_row(f"[bold]{key}[/bold]", str(value))
+            cfg_panel = Panel(
+                cfg_table, title="[bold blue]Config[/bold blue]", border_style="blue"
+            )
+        else:
+            cfg_panel = Panel(
+                "[dim]No config recorded.[/dim]",
+                title="[bold blue]Config[/bold blue]",
+                border_style="blue",
+            )
+
+        if best_metrics:
+            metrics_table = Table(show_header=True, header_style="bold magenta")
+            metrics_table.add_column("Metric")
+            metrics_table.add_column("Best (Max)", justify="right")
+            metrics_table.add_column("Worst (Min)", justify="right")
+            for key, vals in best_metrics.items():
+                metrics_table.add_row(key, f"{vals['max']:.6f}", f"{vals['min']:.6f}")
+            metrics_panel = Panel(
+                metrics_table,
+                title="[bold magenta]Best Metrics[/bold magenta]",
+                border_style="magenta",
+            )
+        else:
+            metrics_panel = Panel(
+                "[dim]No metrics recorded.[/dim]",
+                title="[bold magenta]Best Metrics[/bold magenta]",
+                border_style="magenta",
+            )
+
+        console.print(meta_panel)
+        console.print(cfg_panel)
+        console.print(metrics_panel)
     else:
-        cfg_panel = Panel(
-            "[dim]No config recorded.[/dim]",
-            title="[bold blue]Config[/bold blue]",
-            border_style="blue",
-        )
-
-    if best_metrics:
-        metrics_table = Table(show_header=True, header_style="bold magenta")
-        metrics_table.add_column("Metric")
-        metrics_table.add_column("Best (Max)", justify="right")
-        metrics_table.add_column("Worst (Min)", justify="right")
-        for key, vals in best_metrics.items():
-            metrics_table.add_row(key, f"{vals['max']:.6f}", f"{vals['min']:.6f}")
-        metrics_panel = Panel(
-            metrics_table,
-            title="[bold magenta]Best Metrics[/bold magenta]",
-            border_style="magenta",
-        )
-    else:
-        metrics_panel = Panel(
-            "[dim]No metrics recorded.[/dim]",
-            title="[bold magenta]Best Metrics[/bold magenta]",
-            border_style="magenta",
-        )
-
-    console.print(meta_panel)
-    console.print(cfg_panel)
-    console.print(metrics_panel)
+        click.echo(f"ID: {disp_id}")
+        click.echo(f"Status: {exp.metadata.status}")
+        click.echo(f"Description: {exp.metadata.description or '-'}")
+        click.echo(f"Data Version: {exp.metadata.data_version or '-'}")
+        click.echo(f"Git Hash: {exp.metadata.git_hash or 'N/A'}")
+        click.echo(f"Git Dirty: {exp.metadata.git_dirty}")
+        click.echo(f"Path: {exp.root}")
+        click.echo("")
+        if exp.config:
+            click.echo("Config:")
+            for key, value in exp.config.items():
+                click.echo(f"  {key}: {value}")
+        else:
+            click.echo("Config: No config recorded.")
+        click.echo("")
+        if best_metrics:
+            click.echo("Best Metrics:")
+            click.echo(f"{'Metric':<20} {'Best (Max)':>12} {'Worst (Min)':>12}")
+            for key, vals in best_metrics.items():
+                click.echo(f"{key:<20} {vals['max']:>12.6f} {vals['min']:>12.6f}")
+        else:
+            click.echo("Best Metrics: No metrics recorded.")
 
 
 @cli.command(name="tag")
@@ -661,9 +703,12 @@ def tag_cmd(
         exp.add_tag(tag_name)
         action = "added to"
 
-    console = _get_console(ctx)
     short_id = resolved_id[:8]
-    console.print(f"[bold green]Tag '{tag_name}' {action} {short_id}.[/bold green]")
+    if sys.stdout.isatty():
+        console = _get_console(ctx)
+        console.print(f"[bold green]Tag '{tag_name}' {action} {short_id}.[/bold green]")
+    else:
+        click.echo(f"Tag '{tag_name}' {action} {short_id}.")
 
 
 def main() -> None:
