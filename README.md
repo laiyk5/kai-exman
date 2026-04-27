@@ -1,5 +1,7 @@
 # Kai-Exman
 
+[![codecov](https://codecov.io/gh/laiyk5/kai-exman/branch/main/graph/badge.svg)](https://codecov.io/gh/laiyk5/kai-exman)
+
 A filesystem-based experiment management CLI for machine learning workflows,
 inspired by Git. Kai-Exman treats the filesystem as its database, requiring
 no external services while providing git-log-style experiment tracking,
