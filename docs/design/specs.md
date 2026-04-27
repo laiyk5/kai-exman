@@ -391,3 +391,67 @@ Runs `pip list --format=freeze` and writes the output to `env.txt`. If pip is un
 | Missing artifact source | `FileNotFoundError` | Standard Python exception. |
 | Non-serializable bad case | `TypeError` | Standard `json.dumps` failure. |
 | Missing experiment for `finish` | Returns `None` | `ExMan.finish()` returns `None` instead of raising. |
+
+---
+
+## 10. Deletion & Trash Policy
+
+### Rationale
+
+Permanent deletion is dangerous. Kai-Exman moves experiments to a hidden ``.trash/`` directory instead of destroying them immediately. This provides a recovery window and prevents accidental data loss.
+
+### Trash Location
+
+A ``.trash/`` subdirectory inside the experiment root (e.g., ``outputs/.trash/``). It is excluded from experiment discovery.
+
+### Moving to Trash
+
+When ``ExMan.remove()`` or ``kai-exman rm`` is called:
+
+1. Capacity check: oldest trashed items are purged if limits would be exceeded.
+2. A ``.deletion_info`` JSON file is written inside the experiment folder with:
+   - ``deleted_at``: ISO 8601 timestamp
+   - ``original_path``: absolute path before moving
+3. The folder is moved via ``shutil.move()`` for cross-filesystem safety.
+
+### Capacity Management
+
+Two limits govern the trash:
+
+| Limit | Default | Description |
+| --- | --- | --- |
+| ``trash_max_count`` | 50 | Maximum number of trashed experiment folders. |
+| ``trash_max_size_gb`` | 5.0 | Maximum total size of trash in gigabytes. |
+
+Before adding a new item, the system purges the oldest (by ``deleted_at``) until both limits are satisfied. Oldest-first eviction uses LRU semantics.
+
+### CLI: `rm`
+
+```bash
+kai-exman rm [--yes] [--dry-run] [--clear-trash] [EXP_ID]
+```
+
+| Option | Description |
+| --- | --- |
+| ``-y, --yes`` | Skip confirmation prompt. Required for non-TTY use. |
+| ``--dry-run`` | Preview what would be moved or purged without acting. |
+| ``--clear-trash`` | Permanently delete all items in trash (``EXP_ID`` not required). |
+
+### TTY Confirmation Rules
+
+| Context | Behavior |
+| --- | --- |
+| TTY + no ``--yes`` | Interactive ``Proceed? [y/N]`` prompt. |
+| Non-TTY + no ``--yes`` | Raises ``ClickException`` requiring ``--yes`` or ``--dry-run``. |
+| ``--dry-run`` | No confirmation required; only previews actions. |
+| ``--yes`` | Skips confirmation and proceeds. |
+
+### API Reference
+
+```python
+# Move experiment to trash (auto-purges oldest if over capacity)
+exp, purged = exman.remove(exp_id="abc123...", dry_run=False)
+
+# Empty trash entirely
+ deleted = exman.clear_trash(dry_run=False)
+```

@@ -13,6 +13,8 @@ def test_defaults_are_built_in():
     assert cfg["ignore_paths"] == ["docs/", "tests/", "README.md", "*.md", ".gitignore"]
     assert cfg["short_id_length"] == 8
     assert cfg["strict_mode"] is False
+    assert cfg["trash_max_count"] == 50
+    assert cfg["trash_max_size_gb"] == 5.0
 
 
 def test_cli_override_replaces_default():

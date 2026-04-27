@@ -3,7 +3,9 @@
 A filesystem-based experiment management CLI for machine learning workflows,
 inspired by Git. Kai-Exman treats the filesystem as its database, requiring
 no external services while providing git-log-style experiment tracking,
-structured metrics logging, and reproducibility snapshots.
+structured metrics logging, and reproducibility snapshots. Deleted experiments
+are moved to a trash folder with automatic capacity management to prevent
+accidental data loss.
 
 ## Installation
 
@@ -56,6 +58,13 @@ Tag or untag an experiment:
 ```bash
 kai-exman tag <exp_id> production
 kai-exman tag <exp_id> production -d
+```
+
+Remove an experiment (moved to trash for safety):
+
+```bash
+kai-exman rm <exp_id>
+kai-exman rm --clear-trash  # permanently empty trash
 ```
 
 Finish an experiment and generate a summary:

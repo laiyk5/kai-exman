@@ -26,6 +26,8 @@ class ConfigManager:
         "ignore_paths": ["docs/", "tests/", "README.md", "*.md", ".gitignore"],
         "short_id_length": 8,
         "strict_mode": False,
+        "trash_max_count": 50,
+        "trash_max_size_gb": 5.0,
     }
 
     def __init__(self, cli_overrides: dict[str, Any] | None = None) -> None:

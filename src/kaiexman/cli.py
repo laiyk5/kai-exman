@@ -4,6 +4,8 @@ Provides a Click-based command-line interface for experiment management
 with git-log-style output, smart TTY detection, and Rich terminal rendering.
 """
 
+from __future__ import annotations
+
 import getpass
 import os
 import sys
@@ -755,6 +757,92 @@ def tag_cmd(
         console.print(f"[bold green]Tag '{tag_name}' {action} {short_id}.[/bold green]")
     else:
         click.echo(f"Tag '{tag_name}' {action} {short_id}.")
+
+
+@cli.command()
+@click.argument("exp_id", required=False)
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
+@click.option("--dry-run", is_flag=True, help="Show what would happen without acting")
+@click.option("--clear-trash", is_flag=True, help="Permanently empty the trash")
+@click.pass_context
+def rm(
+    ctx: click.Context,
+    exp_id: str | None,
+    yes: bool,
+    dry_run: bool,
+    clear_trash: bool,
+) -> None:
+    """Remove an experiment to trash, or empty the trash.
+
+    Experiments are moved to ``.trash/`` rather than deleted permanently.
+    Auto-purges the oldest trashed items if capacity limits are exceeded.
+    """
+    cfg_mgr: ConfigManager = ctx.obj["config"]
+    exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
+
+    if clear_trash:
+        items = exman.clear_trash(dry_run=dry_run)
+        if not items:
+            click.echo("Trash is already empty.")
+            return
+
+        if not dry_run and not yes:
+            if sys.stdout.isatty():
+                click.echo(
+                    f"This will permanently delete {len(items)} trashed experiment(s)."
+                )
+                if not click.confirm("Proceed?"):
+                    click.echo("Aborted.")
+                    return
+            else:
+                raise click.ClickException(
+                    "Non-TTY operation requires --yes to clear trash. "
+                    "Use --dry-run to preview."
+                )
+
+        # Re-run without dry_run after confirmation
+        if not dry_run:
+            items = exman.clear_trash(dry_run=False)
+
+        for path in items:
+            action = "would delete" if dry_run else "deleted"
+            click.echo(f"{action}: {path.name}")
+        return
+
+    if exp_id is None:
+        raise click.ClickException("EXP_ID is required unless --clear-trash is used.")
+
+    resolved_id = _resolve_exp_id(exman, exp_id)
+    exp = exman.get(resolved_id)
+    if exp is None:
+        raise click.ClickException(f"Experiment '{resolved_id}' not found.")
+
+    if not dry_run and not yes:
+        if sys.stdout.isatty():
+            short_id = resolved_id[: cfg_mgr.get("short_id_length", 8)]
+            click.echo(
+                f"This will move experiment '{short_id}' to trash."
+            )
+            if not click.confirm("Proceed?"):
+                click.echo("Aborted.")
+                return
+        else:
+            raise click.ClickException(
+                "Non-TTY operation requires --yes to remove. "
+                "Use --dry-run to preview."
+            )
+
+    removed_exp, purged = exman.remove(resolved_id, dry_run=dry_run)
+
+    for path in purged:
+        action = "would purge" if dry_run else "purged"
+        click.echo(f"{action}: {path.name}")
+
+    if removed_exp is not None:
+        short_len = cfg_mgr.get("short_id_length", 8)
+        short_id = removed_exp.metadata.exp_id[:short_len]
+        action = "would move" if dry_run else "moved"
+        click.echo(f"{action} experiment {short_id} to trash.")
 
 
 def main() -> None:
