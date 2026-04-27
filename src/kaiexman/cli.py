@@ -24,17 +24,52 @@ from kaiexman.experiment import Experiment, validate_group, validate_tag
 from kaiexman.manager import ExMan
 from kaiexman.models import LockedExperimentError, MissingSummaryError
 
+# Editor templates for the Mandatory Reflection policy.
+_INTENT_TEMPLATE = """\
+Hypothesis:
 
-def _require_text(value: str, prompt: str, empty_msg: str) -> str:
+Method:
+
+Expected outcome:
+"""
+
+_FORK_TEMPLATE = """\
+What changed from the parent:
+
+Why this change matters:
+
+Expected impact:
+"""
+
+_CONCLUSION_TEMPLATE = """\
+What worked:
+
+What did not work:
+
+Key metrics / observations:
+
+Next steps:
+"""
+
+
+def _require_text(
+    value: str,
+    prompt: str,
+    empty_msg: str,
+    template: str = "",
+) -> str:
     """Return value if non-empty, otherwise open an editor or raise.
 
-    In interactive mode (TTY), opens the system editor (via click.edit).
+    In interactive mode (TTY), opens the system editor (via click.edit)
+    with an optional template pre-filled.
+
     In non-interactive mode, raises a ClickException.
 
     Args:
         value: The provided value from CLI option.
         prompt: Header text to seed the editor buffer.
         empty_msg: Error message if the value is still empty after editing.
+        template: Optional multi-line template to pre-fill in the editor.
 
     Returns:
         The non-empty text string.
@@ -47,10 +82,24 @@ def _require_text(value: str, prompt: str, empty_msg: str) -> str:
         return value
     if not sys.stdin.isatty():
         raise click.ClickException(empty_msg)
-    edited = click.edit(text=f"# {prompt}\n")
-    if edited is None or not edited.strip():
+
+    if template:
+        editor_text = f"# {prompt}\n# Lines starting with # are ignored.\n{template}\n"
+    else:
+        editor_text = f"# {prompt}\n"
+
+    edited = click.edit(text=editor_text)
+    if edited is None:
         raise click.ClickException(empty_msg)
-    return edited.strip()
+
+    # Strip comment lines and whitespace
+    cleaned = "\n".join(
+        line for line in edited.splitlines() if not line.strip().startswith("#")
+    ).strip()
+
+    if not cleaned:
+        raise click.ClickException(empty_msg)
+    return cleaned
 
 
 class AliasedGroup(click.Group):
@@ -275,6 +324,7 @@ def init(
             "Experiment description is required."
             " Use --description or run interactively."
         ),
+        template=_INTENT_TEMPLATE,
     )
     _validate_group(group)
     cfg = None
@@ -349,6 +399,7 @@ def run(
                 "Description is required for resume."
                 " Use --description or run interactively."
             ),
+            template=_FORK_TEMPLATE,
         )
         try:
             exp, is_new, attempt_num = exman.resume(
@@ -368,6 +419,7 @@ def run(
                 "Experiment description is required."
                 " Use --description or run interactively."
             ),
+            template=_INTENT_TEMPLATE,
         )
         if group is not None:
             _validate_group(group)
@@ -930,7 +982,11 @@ def finish(ctx: click.Context, exp_id: str, summary: str, notes: str) -> None:
     summary = _require_text(
         summary,
         prompt="Write a conclusion reflecting on this experiment...",
-        empty_msg="Experiment summary is required. Use --summary or run interactively.",
+        empty_msg=(
+            "Experiment summary is required."
+            " Use --summary or run interactively."
+        ),
+        template=_CONCLUSION_TEMPLATE,
     )
     cfg_mgr: ConfigManager = ctx.obj["config"]
     exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
@@ -979,7 +1035,11 @@ def abort(ctx: click.Context, exp_id: str, summary: str, notes: str) -> None:
     summary = _require_text(
         summary,
         prompt="Write a conclusion reflecting on this experiment...",
-        empty_msg="Experiment summary is required. Use --summary or run interactively.",
+        empty_msg=(
+            "Experiment summary is required."
+            " Use --summary or run interactively."
+        ),
+        template=_CONCLUSION_TEMPLATE,
     )
     cfg_mgr: ConfigManager = ctx.obj["config"]
     exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
