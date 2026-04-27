@@ -109,7 +109,7 @@ class AliasedGroup(click.Group):
         _aliases: Mapping of alias names to canonical command names.
     """
 
-    _aliases = {"log": "list"}
+    _aliases = {"log": "list", "show": "status"}
 
     def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
         """Resolve a command name, falling back to registered aliases.
@@ -1167,7 +1167,7 @@ def abort(ctx: click.Context, exp_id: str | None, notes: str) -> None:
     ])
 
 
-@cli.command()
+@cli.command(name="status")
 @click.argument("exp_id", required=False)
 @click.option(
     "--full-id",
@@ -1175,7 +1175,7 @@ def abort(ctx: click.Context, exp_id: str | None, notes: str) -> None:
     help="Display full 16-character experiment ID",
 )
 @click.pass_context
-def show(ctx: click.Context, exp_id: str | None, full_id: bool) -> None:
+def status(ctx: click.Context, exp_id: str | None, full_id: bool) -> None:
     """Display a detailed summary of a specific experiment.
 
     Shows metadata, configuration, and best metrics in a structured
