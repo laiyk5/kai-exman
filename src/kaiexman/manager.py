@@ -309,6 +309,7 @@ class ExMan:
         config: dict[str, Any] | None = None,
         data_version: str = "",
         group: str = "default",
+        data_path: str = "",
     ) -> Experiment:
         """Create and initialize a new experiment.
 
@@ -321,6 +322,8 @@ class ExMan:
             config: Optional configuration dictionary to serialize as YAML.
             data_version: Optional data version identifier for reproducibility.
             group: Group name for physical organization (default: "default").
+            data_path: Optional path to a dataset file or directory. A BLAKE2b
+                hash is computed automatically and stored in metadata.
 
         Returns:
             The initialized Experiment instance.
@@ -348,6 +351,8 @@ class ExMan:
             data_version=data_version,
             group=group,
         )
+        if data_path:
+            meta.data_hash = Experiment.compute_data_hash(data_path)
         exp = Experiment(
             root=folder,
             metadata=meta,
@@ -511,16 +516,21 @@ class ExMan:
         config: dict[str, Any] | None = None,
         data_version: str = "",
         group: str | None = None,
+        data_path: str = "",
     ) -> Tuple[Experiment, bool, int]:
-        """Resume an experiment with context-aware logic.
+        """Resume an experiment with strict lifecycle constraints.
 
-        Case A (Logic-Clean): If the current workspace matches the parent's
-        Git commit and is clean, the existing experiment is reopened and a
-        new attempt is appended.
+        Case A (Retry): The parent experiment is *running* (not locked) and
+        the workspace matches the parent's Git commit exactly. A new attempt
+        is appended to the same experiment.
 
-        Case B (Logic-Dirty): If the workspace has diverged, a new experiment
-        is created with ``parent_id`` set and checkpoints/configs are copied
-        from the parent.
+        Case B (Inheritance): The parent experiment is *finished* (locked).
+        A new experiment is created with ``parent_id`` set and checkpoints are
+        copied from the parent.
+
+        Aborted experiments cannot be resumed or inherited from.
+        Running experiments with a diverged workspace must be finished or
+        aborted before inheritance can occur.
 
         Args:
             exp_id: Full ID of the experiment to resume from.
@@ -529,46 +539,42 @@ class ExMan:
             config: Config for a new experiment (Case B, defaults to parent's).
             data_version: Data version for a new experiment (Case B).
             group: Group for a new experiment (Case B). Ignored for Case A.
+            data_path: Path to a dataset file or directory for a new
+                experiment (Case B). A BLAKE2b hash is computed automatically.
 
         Returns:
             Tuple of (experiment, is_new_experiment, attempt_number).
 
         Raises:
-            ValueError: If the parent experiment is not found.
+            ValueError: If the parent experiment is not found, was aborted,
+                or has a diverged workspace.
         """
         parent = self.get(exp_id)
         if parent is None:
             raise ValueError(f"Experiment '{exp_id}' not found")
 
-        current_hash, current_dirty = self._current_git_state()
-
-        parent_has_attempts = bool(parent.metadata.attempts)
-        has_successful_attempt = any(
-            a.status == "success" for a in parent.metadata.attempts
-        )
-
-        if parent_has_attempts and not has_successful_attempt:
-            warnings.warn(
-                f"Experiment '{exp_id}' has no successful attempts. "
-                "Only configuration (not data/state) will be inherited.",
-                stacklevel=2,
+        if parent.metadata.status == "aborted" and parent.metadata.locked:
+            raise ValueError(
+                f"Experiment '{exp_id}' was aborted and cannot be resumed."
             )
 
-        # Case A: Logic-Clean Resume (Retry)
-        # Includes draft experiments (no attempts yet) — starting the first
-        # attempt on an initialized-but-not-run experiment is natural.
-        if (
+        current_hash, current_dirty = self._current_git_state()
+        is_clean = (
             current_hash
             and current_hash == parent.metadata.git_hash
             and not current_dirty
-        ):
-            if parent.metadata.locked or parent.metadata.status in _TERMINAL_STATUSES:
-                raise LockedExperimentError(
-                    f"Experiment {parent.metadata.exp_id} is already sealed "
-                    f"(status: {parent.metadata.status}, "
-                    f"finished_at: {parent.metadata.finished_at}). "
-                    "Use 'kai-exman run --resume <id>' to start a new record."
+        )
+
+        is_running = not parent.metadata.locked
+
+        if is_running:
+            if not is_clean:
+                raise ValueError(
+                    "Workspace has diverged from the experiment's git state. "
+                    "Finish or abort this experiment first, then resume from "
+                    "the finished experiment to create a child record."
                 )
+            # Case A: Retry
             if group is not None and group != parent.metadata.group:
                 warnings.warn(
                     f"--group ignored for Case A resume; experiment remains "
@@ -587,13 +593,14 @@ class ExMan:
             self._update_index(parent, "add")
             return parent, False, attempt_num
 
-        # Case B: Logic-Dirty Resume (Evolution)
+        # Case B: Inheritance (parent is locked/finished)
         child = self.init(
             description=description,
             tags=tags if tags is not None else list(parent.metadata.tags),
             config=config if config is not None else dict(parent.config),
             data_version=data_version,
             group=group or "default",
+            data_path=data_path,
         )
         child.metadata.parent_id = parent.metadata.exp_id
         child.metadata.attempts.append(
@@ -801,6 +808,10 @@ class ExMan:
         items if necessary. Writes a ``.deletion_info`` file inside the
         trashed folder to track the deletion timestamp.
 
+        If the experiment has a parent that is marked deletable and has no
+        remaining children after this removal, the parent is also removed
+        (cascade delete).
+
         Args:
             exp_id: Full experiment identifier.
             dry_run: If True, only report what would happen.
@@ -812,6 +823,23 @@ class ExMan:
         exp = self.get(exp_id)
         if exp is None:
             return None, []
+
+        # Protect experiments that have children — this is a core rule,
+        # enforced regardless of dry_run.
+        children = [
+            e for e in self.list()
+            if e.metadata.parent_id == exp_id
+        ]
+        if children:
+            child_ids = ", ".join(
+                c.metadata.exp_id[:8] for c in children
+            )
+            raise ValueError(
+                f"Cannot remove experiment '{exp_id}' because it has "
+                f"child experiment(s): {child_ids}. "
+                f"Mark it as deletable to remove automatically when "
+                f"children are gone."
+            )
 
         pending_size = self._dir_size_bytes(exp.root)
         purged = self._ensure_trash_capacity(
@@ -831,7 +859,50 @@ class ExMan:
             shutil.move(str(exp.root), str(dest))
             self._update_index(exp, "remove")
 
+            # Cascade delete: check if parent is deletable and now childless
+            parent_id = exp.metadata.parent_id
+            if parent_id:
+                parent = self.get(parent_id)
+                if parent and parent.metadata.deletable:
+                    remaining_children = [
+                        e for e in self.list()
+                        if e.metadata.parent_id == parent_id
+                    ]
+                    if not remaining_children:
+                        parent_exp, parent_purged = self.remove(
+                            parent_id, dry_run=False
+                        )
+                        if parent_exp is not None:
+                            print(
+                                f"[kai-exman] Cascade: removed parent "
+                                f"{parent_id[:8]}"
+                            )
+                        purged.extend(parent_purged)
+
         return exp, purged
+
+    def mark_deletable(self, exp_id: str) -> Experiment:
+        """Mark an experiment as deletable for cascade removal.
+
+        A deletable experiment will be automatically removed when its last
+        child experiment is deleted.
+
+        Args:
+            exp_id: Full experiment identifier.
+
+        Returns:
+            The updated Experiment instance.
+
+        Raises:
+            ValueError: If the experiment is not found.
+        """
+        exp = self.get(exp_id)
+        if exp is None:
+            raise ValueError(f"Experiment '{exp_id}' not found")
+        exp.metadata.deletable = True
+        exp.write_metadata()
+        self._update_index(exp, "add")
+        return exp
 
     def clear_trash(self, dry_run: bool = False) -> List[Path]:
         """Permanently delete all items in the trash.

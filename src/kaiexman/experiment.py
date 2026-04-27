@@ -5,7 +5,9 @@ directory and exposes methods for logging metrics, saving artifacts,
 recording bad cases, and generating summaries.
 """
 
+import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -100,6 +102,7 @@ class Experiment:
         self.critical_paths = critical_paths
         self._metrics_path = root / "metrics.jsonl"
         self._bad_cases_path = root / "artifacts" / "bad_cases.json"
+        self._diff_patch_path = root / "code.patch"
         self._lock = Lock()
 
     @staticmethod
@@ -176,6 +179,9 @@ class Experiment:
     def write_metadata(self, force: bool = False) -> None:
         """Write metadata to metadata.json, capturing Git state.
 
+        If the working tree is dirty, also writes a ``code.patch`` file
+        containing the diff against HEAD for critical paths.
+
         Args:
             force: If True, bypass the locked check. Used by finish().
 
@@ -191,8 +197,84 @@ class Experiment:
         git_hash, git_dirty = self._git_info(critical_paths=self.critical_paths)
         self.metadata.git_hash = git_hash
         self.metadata.git_dirty = git_dirty
+        if git_dirty and git_hash:
+            self._save_diff_patch()
         path = self.root / "metadata.json"
         path.write_text(self.metadata.model_dump_json(indent=2))
+
+    def _save_diff_patch(self) -> None:
+        """If the workspace is dirty, write a git diff patch to code.patch.
+
+        Captures the diff against HEAD for all critical paths, including
+        both tracked modifications and untracked files.
+        """
+        if not self.metadata.git_hash:
+            return
+
+        if self.critical_paths is not None:
+            paths = self.critical_paths
+        else:
+            paths = _DEFAULT_CRITICAL_PATHS
+
+        try:
+            repo_root = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+
+            diff_result = subprocess.run(
+                ["git", "-C", repo_root, "diff", "HEAD", "--"] + paths,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            patch_content = diff_result.stdout
+
+            untracked_result = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    repo_root,
+                    "ls-files",
+                    "--others",
+                    "--exclude-standard",
+                    "--",
+                ]
+                + paths,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            untracked_files = [
+                f for f in untracked_result.stdout.strip().split("\n") if f
+            ]
+
+            for f in untracked_files:
+                patch_content += f"\ndiff --git a/{f} b/{f}\nnew file mode 100644\n"
+                patch_content += "--- /dev/null\n"
+                patch_content += f"+++ b/{f}\n"
+                file_path = Path(repo_root) / f
+                if file_path.exists():
+                    try:
+                        content = file_path.read_text(
+                            encoding="utf-8", errors="replace"
+                        )
+                        lines = content.splitlines()
+                        patch_content += f"@@ -0,0 +1,{len(lines)} @@\n"
+                        for line in lines:
+                            patch_content += f"+{line}\n"
+                    except (OSError, UnicodeDecodeError):
+                        patch_content += "@@ -0,0 +1 @@\n"
+                        patch_content += "+\x00<binary>\n"
+
+            if patch_content.strip():
+                self._diff_patch_path.write_text(
+                    patch_content, encoding="utf-8"
+                )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
 
     def write_config(self) -> None:
         """Serialize the config dictionary to config.yaml."""
@@ -342,6 +424,47 @@ class Experiment:
             env_path.write_text(result.stdout, encoding="utf-8")
         except (subprocess.CalledProcessError, FileNotFoundError):
             env_path.write_text("# pip not available\n", encoding="utf-8")
+
+    @staticmethod
+    def compute_data_hash(path: str | Path) -> str:
+        """Compute a deterministic BLAKE2b hash of a file or directory.
+
+        For directories, recursively hashes all files in deterministic
+        sorted order. Each file contributes ``"{rel_path}:{file_hash}\n"``
+        to the directory hasher.
+
+        Args:
+            path: Path to a file or directory.
+
+        Returns:
+            Hex digest string, or empty string if the path does not exist.
+        """
+        p = Path(path)
+        if not p.exists():
+            return ""
+
+        def _hash_file(fp: Path) -> str:
+            h = hashlib.blake2b(digest_size=32)
+            with open(fp, "rb") as f:
+                while chunk := f.read(8192):
+                    h.update(chunk)
+            return h.hexdigest()
+
+        if p.is_file():
+            return _hash_file(p)
+
+        if p.is_dir():
+            h = hashlib.blake2b(digest_size=32)
+            for root, dirs, files in os.walk(p):
+                dirs.sort()
+                for filename in sorted(files):
+                    file_path = Path(root) / filename
+                    rel_path = file_path.relative_to(p).as_posix()
+                    file_hash = _hash_file(file_path)
+                    h.update(f"{rel_path}:{file_hash}\n".encode())
+            return h.hexdigest()
+
+        return ""
 
     def compute_best_metrics(self) -> dict[str, dict[str, float]]:
         """Compute the best (max and min) value for each metric.
