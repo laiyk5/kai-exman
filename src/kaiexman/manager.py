@@ -517,6 +517,7 @@ class ExMan:
         data_version: str = "",
         group: str | None = None,
         data_path: str = "",
+        mode: str = "auto",
     ) -> Tuple[Experiment, bool, int]:
         """Resume an experiment with strict lifecycle constraints.
 
@@ -541,6 +542,7 @@ class ExMan:
             group: Group for a new experiment (Case B). Ignored for Case A.
             data_path: Path to a dataset file or directory for a new
                 experiment (Case B). A BLAKE2b hash is computed automatically.
+            mode: Resume mode: "auto" (default), "retry", or "inherit".
 
         Returns:
             Tuple of (experiment, is_new_experiment, attempt_number).
@@ -566,6 +568,27 @@ class ExMan:
         )
 
         is_running = not parent.metadata.locked
+
+        # Validate explicit mode constraints
+        if mode == "retry":
+            if not is_running:
+                raise ValueError(
+                    "Experiment is finished. Use `run --inherit` to create a child."
+                )
+            if not is_clean:
+                raise ValueError(
+                    "Workspace has diverged from the experiment's git state. "
+                    "Finish or abort this experiment first, then resume from "
+                    "the finished experiment to create a child record."
+                )
+        elif mode == "inherit":
+            if is_running:
+                raise ValueError(
+                    "Experiment is still running. Use `run --retry` "
+                    "to append an attempt."
+                )
+            if parent.metadata.status == "aborted":
+                raise ValueError("Aborted experiments cannot be inherited.")
 
         if is_running:
             if not is_clean:
@@ -705,6 +728,39 @@ class ExMan:
     # ------------------------------------------------------------------
     # Trash
     # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Default experiment (.current)
+    # ------------------------------------------------------------------
+
+    def _current_path(self) -> Path:
+        """Return the path to the default experiment marker file."""
+        return self.root / ".current"
+
+    def get_default_exp_id(self) -> str | None:
+        """Read the default experiment ID from the .current file.
+
+        Returns:
+            The full experiment ID if the file exists and is valid, else None.
+        """
+        path = self._current_path()
+        if not path.exists():
+            return None
+        exp_id = path.read_text(encoding="utf-8").strip()
+        if len(exp_id) == 16 and all(c in "0123456789abcdef" for c in exp_id):
+            # Validate that the ID actually exists
+            if self.get(exp_id) is not None:
+                return exp_id
+        return None
+
+    def set_default_exp_id(self, exp_id: str) -> None:
+        """Write the default experiment ID to the .current file.
+
+        Args:
+            exp_id: Full 16-character experiment identifier.
+        """
+        path = self._current_path()
+        path.write_text(exp_id, encoding="utf-8")
 
     def _trash_dir(self) -> Path:
         """Return the path to the trash directory, creating it if needed.
