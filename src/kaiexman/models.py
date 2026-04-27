@@ -18,7 +18,8 @@ class Metadata(BaseModel):
         exp_id: Unique 16-character hexadecimal experiment identifier.
         timestamp: ISO 8601 timestamp when the experiment was created.
         git_hash: Git commit hash at initialization time (empty if not a repo).
-        git_dirty: Whether the working tree had uncommitted changes.
+        git_dirty: True if logic-critical files (src/, build config) have
+            uncommitted changes. Documentation and test changes are ignored.
         tags: List of user-defined tags for categorization.
         data_version: Optional data version or hash for reproducibility.
         description: Human-readable description of the experiment.

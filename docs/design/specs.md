@@ -97,6 +97,19 @@ Experiments transition through the following statuses:
 
 `finish()` accepts an arbitrary status string, but the four values above are the convention. There is no enforced state machine; callers may set any status they choose.
 
+### Git Dirty Semantics
+
+`git_dirty` does **not** mean "any uncommitted change." It means
+"uncommitted changes in logic-critical files."
+
+| Classification | Paths | Impact on `git_dirty` |
+| --- | --- | --- |
+| Critical | `src/`, `pyproject.toml`, `uv.lock`, build files | Changes here set `git_dirty = True` |
+| Non-Critical | `docs/`, `tests/`, `README.md`, `.gitignore` | Changes here leave `git_dirty = False` |
+
+This distinction prevents documentation edits from producing false
+reproducibility warnings while preserving strictness for code changes.
+
 ### On-Disk Layout
 
 ```

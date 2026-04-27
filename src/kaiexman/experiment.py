@@ -19,6 +19,16 @@ from kaiexman.models import Metadata, MetricsRow
 
 _TAG_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 
+_CRITICAL_PATHS = [
+    "src/",
+    "pyproject.toml",
+    "uv.lock",
+    "requirements.txt",
+    "requirements-dev.txt",
+    "setup.py",
+    "setup.cfg",
+]
+
 
 def validate_tag(tag: str) -> None:
     """Validate a tag name against the allowed format.
@@ -65,27 +75,66 @@ class Experiment:
         self._bad_cases_path = root / "artifacts" / "bad_cases.json"
         self._lock = Lock()
 
-    def _git_info(self) -> tuple[str, bool]:
+    def _git_info(self, cwd: str | None = None) -> tuple[str, bool]:
         """Capture current Git repository state.
+
+        Args:
+            cwd: Working directory for Git commands. Defaults to the
+                current process directory.
 
         Returns:
             Tuple of (commit hash, dirty flag). Returns ("", False) if
             Git is unavailable or the current directory is not a repository.
+
+        The dirty flag reflects only changes in logic-critical files
+        (src/, pyproject.toml, build files). Documentation and test
+        changes do not mark the experiment as dirty.
         """
         try:
             hash_raw = subprocess.run(
                 ["git", "rev-parse", "HEAD"],
+                cwd=cwd,
                 capture_output=True,
                 text=True,
                 check=True,
             )
-            dirty_raw = subprocess.run(
-                ["git", "status", "--porcelain"],
+            git_hash = hash_raw.stdout.strip()
+
+            repo_root = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+
+            diff_result = subprocess.run(
+                ["git", "-C", repo_root, "diff", "--quiet", "HEAD", "--"]
+                + _CRITICAL_PATHS,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            has_diff = diff_result.returncode != 0
+
+            untracked_result = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    repo_root,
+                    "ls-files",
+                    "--others",
+                    "--exclude-standard",
+                    "--",
+                ]
+                + _CRITICAL_PATHS,
                 capture_output=True,
                 text=True,
                 check=True,
             )
-            return hash_raw.stdout.strip(), bool(dirty_raw.stdout.strip())
+            has_untracked = bool(untracked_result.stdout.strip())
+
+            return git_hash, has_diff or has_untracked
         except (subprocess.CalledProcessError, FileNotFoundError):
             return "", False
 
