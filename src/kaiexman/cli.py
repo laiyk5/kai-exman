@@ -109,7 +109,7 @@ class AliasedGroup(click.Group):
         _aliases: Mapping of alias names to canonical command names.
     """
 
-    _aliases = {"log": "list", "show": "status"}
+    _aliases = {"log": "list", "show": "status", "suggest-groups": "group"}
 
     def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
         """Resolve a command name, falling back to registered aliases.
@@ -1354,7 +1354,8 @@ def use(ctx: click.Context, exp_id: str) -> None:
     )
 
 
-@cli.command()
+@cli.command(name="group")
+@click.option("-l", "--list", "list_flag", is_flag=True, help="List all groups")
 @click.option(
     "--threshold",
     type=float,
@@ -1362,18 +1363,39 @@ def use(ctx: click.Context, exp_id: str) -> None:
 )
 @click.option("--apply", is_flag=True, help="Apply suggested group moves")
 @click.pass_context
-def suggest_groups(
+def group_cmd(
     ctx: click.Context,
+    list_flag: bool,
     threshold: float | None,
     apply: bool,
 ) -> None:
-    """Suggest group assignments based on config key similarity.
+    """Manage experiment groups.
 
-    Computes Jaccard similarity between experiment config keys and
-    suggests the most similar group's assignment for each experiment.
+    With no flags: suggest group assignments based on config key similarity.
+    With -l: list all existing groups and experiment counts.
     """
     cfg_mgr: ConfigManager = ctx.obj["config"]
     exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
+
+    if list_flag:
+        experiments = exman.list()
+        if not experiments:
+            click.echo("No experiments found.")
+            return
+
+        group_counts: dict[str, int] = {}
+        for exp in experiments:
+            group_counts[exp.metadata.group] = (
+                group_counts.get(exp.metadata.group, 0) + 1
+            )
+
+        lines: list[str] = []
+        lines.append(f"[bold]{'Group':<20} {'Experiments':>11}[/bold]")
+        for group, count in sorted(group_counts.items()):
+            lines.append(f"{group:<20} {count:>11}")
+
+        _echo_lines(ctx, lines)
+        return
 
     if threshold is not None:
         # Temporarily override config for this run
@@ -1389,7 +1411,7 @@ def suggest_groups(
         click.echo("No group suggestions above the similarity threshold.")
         return
 
-    lines: list[str] = []
+    lines = []
     lines.append(
         f"[bold]{'Experiment':<12} {'Current':<12} {'Suggested':<12} "
         f"Similarity[/bold]"
