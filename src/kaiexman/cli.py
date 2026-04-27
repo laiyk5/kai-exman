@@ -305,6 +305,7 @@ def cli(
 @click.option("--tags", "-t", default="", help="Comma-separated tags")
 @click.option("--config", "-c", help="Path to config YAML file")
 @click.option("--group", "-g", default="default", help="Group name (default: default)")
+@click.option("--data-path", help="Dataset path for automatic hash")
 @click.pass_context
 def init(
     ctx: click.Context,
@@ -312,6 +313,7 @@ def init(
     tags: str,
     config: str | None,
     group: str,
+    data_path: str | None,
 ) -> None:
     """Initialize a new experiment.
 
@@ -336,7 +338,13 @@ def init(
     tag_list = [t.strip() for t in tags.split(",")] if tags else []
     cfg_mgr: ConfigManager = ctx.obj["config"]
     exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
-    exp = exman.init(description=description, tags=tag_list, config=cfg, group=group)
+    exp = exman.init(
+        description=description,
+        tags=tag_list,
+        config=cfg,
+        group=group,
+        data_path=data_path or "",
+    )
 
     short_len = cfg_mgr.get("short_id_length", 8)
     short_id = exp.metadata.exp_id[:short_len]
@@ -362,6 +370,7 @@ def init(
 @click.option("--tags", "-t", default="", help="Comma-separated tags")
 @click.option("--config", "-c", help="Path to config YAML file")
 @click.option("--group", "-g", help="Group for new experiment (Case B resume)")
+@click.option("--data-path", help="Dataset path for automatic hash")
 @click.argument("command", nargs=-1, required=True)
 @click.pass_context
 def run(
@@ -371,6 +380,7 @@ def run(
     tags: str,
     config: str | None,
     group: str | None,
+    data_path: str | None,
     command: tuple[str, ...],
 ) -> None:
     """Run a command within an experiment context.
@@ -410,6 +420,8 @@ def run(
             "  kai-exman run --resume <id> -- python train.py"
         )
 
+    resolved_id: str | None = None
+
     if resume:
         resolved_id = _resolve_exp_id(exman, resume)
         parent = exman.get(resolved_id)
@@ -418,36 +430,51 @@ def run(
                 f"Experiment '{resolved_id}' not found."
             )
 
-        # Case A (retry) does not need a description.
-        # Case B (evolution/fork) requires one.
-        current_hash, current_dirty = exman._current_git_state()
-        is_case_a = (
-            current_hash
-            and current_hash == parent.metadata.git_hash
-            and not current_dirty
-        )
-        if not is_case_a:
+        # Aborted experiments cannot be resumed.
+        if parent.metadata.status == "aborted" and parent.metadata.locked:
+            raise click.ClickException(
+                f"Experiment '{resolved_id}' was aborted and cannot be resumed."
+            )
+
+        is_running = not parent.metadata.locked
+
+        if is_running:
+            # Case A: Retry — workspace must be clean.
+            current_hash, current_dirty = exman._current_git_state()
+            is_clean = (
+                current_hash
+                and current_hash == parent.metadata.git_hash
+                and not current_dirty
+            )
+            if not is_clean:
+                raise click.ClickException(
+                    "Workspace has diverged from the experiment's git state. "
+                    "Finish or abort this experiment first, then resume from "
+                    "the finished experiment to create a child record."
+                )
+            description = ""
+        else:
+            # Case B: Inheritance from a finished experiment.
             description = _require_text(
                 description,
                 prompt="Describe what is being changed or tested in this fork...",
                 empty_msg=(
-                    "Description is required for resume."
+                    "Description is required for inheritance."
                     " Use --description or run interactively."
                 ),
                 template=_FORK_TEMPLATE,
             )
-        else:
-            description = ""
 
         try:
-            exp, is_new, attempt_num = exman.resume(
+            exp, is_new, _attempt_num = exman.resume(
                 exp_id=resolved_id,
                 description=description,
                 tags=tag_list or None,
                 config=cfg,
                 group=group,
+                data_path=data_path or "",
             )
-        except LockedExperimentError as exc:
+        except (LockedExperimentError, ValueError) as exc:
             raise click.ClickException(str(exc)) from exc
     else:
         description = _require_text(
@@ -466,23 +493,56 @@ def run(
             tags=tag_list,
             config=cfg,
             group=group or "default",
+            data_path=data_path or "",
         )
         is_new = True
-        attempt_num = 1
 
+    _execute_in_context(
+        ctx,
+        exman,
+        exp,
+        command,
+        is_new,
+        resume=resolved_id,
+        resolved_id=resolved_id,
+        cfg_mgr=cfg_mgr,
+    )
+
+
+def _execute_in_context(
+    ctx: click.Context,
+    exman: ExMan,
+    exp: Experiment,
+    command: tuple[str, ...],
+    is_new: bool,
+    resume: str | None,
+    resolved_id: str | None,
+    cfg_mgr: ConfigManager,
+) -> None:
+    """Execute a command inside an experiment context.
+
+    Shared helper used by ``run`` and ``retry``.
+    """
     short_len = cfg_mgr.get("short_id_length", 8)
     short_id = exp.metadata.exp_id[:short_len]
 
     # Ensure an attempt record exists before execution.
-    # Case A resumes already have attempts from ExMan.resume().
     if not exp.metadata.attempts:
         from kaiexman.models import Attempt
 
         exp.metadata.attempts.append(
-            Attempt(sequence=1, status="running", reason="run_1")
+            Attempt(
+                sequence=1, status="running", reason="run_1", command=list(command)
+            )
         )
         exp.write_metadata()
         attempt_num = 1
+    else:
+        last_attempt = exp.metadata.attempts[-1]
+        if not last_attempt.command:
+            last_attempt.command = list(command)
+            exp.write_metadata()
+        attempt_num = last_attempt.sequence
 
     # Set resume environment variables
     env = os.environ.copy()
@@ -490,15 +550,18 @@ def run(
     env["KAI_EXMAN_ATTEMPT_COUNT"] = str(attempt_num)
     if resume and not is_new:
         env["KAI_EXMAN_PARENT_PATH"] = str(exp.root)
-    elif resume and is_new:
+    elif resume and is_new and resolved_id:
         parent = exman.get(resolved_id)
         if parent is not None:
             env["KAI_EXMAN_PARENT_PATH"] = str(parent.root)
 
     if is_new and resume:
+        parent_short = (
+            resolved_id[:short_len] if resolved_id else resume[:short_len]
+        )
         msg = (
             f"[bold green]Creating new experiment {short_id} "
-            f"inherited from {resolved_id[:short_len]}.[/bold green]"
+            f"inherited from {parent_short}.[/bold green]"
         )
     elif resume:
         msg = (
@@ -535,6 +598,68 @@ def run(
     exp.write_metadata()
 
     sys.exit(result.returncode)
+
+
+@cli.command()
+@click.argument("exp_id")
+@click.option("--tags", "-t", default="", help="Comma-separated tags")
+@click.option("--config", "-c", help="Path to config YAML file")
+@click.option("--data-path", help="Dataset path for automatic hash")
+@click.argument("command", nargs=-1, required=True)
+@click.pass_context
+def retry(
+    ctx: click.Context,
+    exp_id: str,
+    tags: str,
+    config: str | None,
+    data_path: str | None,
+    command: tuple[str, ...],
+) -> None:
+    """Retry an experiment by appending a new attempt.
+
+    Only works when the workspace matches the experiment's Git commit
+    exactly and the experiment is still running (not finished or aborted).
+
+    Usage:
+        kai-exman retry <exp_id> -- python train.py
+    """
+    cfg = None
+    if config and Path(config).exists():
+        with open(config, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+
+    tag_list = [t.strip() for t in tags.split(",")] if tags else []
+    cfg_mgr: ConfigManager = ctx.obj["config"]
+    exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
+
+    if not command:
+        raise click.ClickException(
+            "No command to execute. Provide a command after '--', e.g.:\n"
+            "  kai-exman retry <exp_id> -- python train.py"
+        )
+
+    resolved_id = _resolve_exp_id(exman, exp_id)
+
+    try:
+        exp, is_new, _attempt_num = exman.resume(
+            exp_id=resolved_id,
+            tags=tag_list or None,
+            config=cfg,
+            data_path=data_path or "",
+        )
+    except (LockedExperimentError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    _execute_in_context(
+        ctx,
+        exman,
+        exp,
+        command,
+        is_new,
+        resume=resolved_id,
+        resolved_id=resolved_id,
+        cfg_mgr=cfg_mgr,
+    )
 
 
 @cli.command(name="list")
@@ -1075,30 +1200,15 @@ def finish(ctx: click.Context, exp_id: str, summary: str, notes: str) -> None:
 
 @cli.command()
 @click.argument("exp_id")
-@click.option(
-    "--summary",
-    "-s",
-    default="",
-    help="Mandatory conclusion reflecting on the experiment",
-)
 @click.option("--notes", "-n", default="", help="Additional post-mortem notes")
 @click.pass_context
-def abort(ctx: click.Context, exp_id: str, summary: str, notes: str) -> None:
+def abort(ctx: click.Context, exp_id: str, notes: str) -> None:
     """Abort an experiment and generate summary.md.
 
     Marks the last attempt as aborted (no exit code) and seals the lab
-    record. Use this when an experiment was stopped manually or did not
-    complete normally.
+    record. No summary is required — the abort action itself is the
+    statement that the experiment has no value.
     """
-    summary = _require_text(
-        summary,
-        prompt="Write a conclusion reflecting on this experiment...",
-        empty_msg=(
-            "Experiment summary is required."
-            " Use --summary or run interactively."
-        ),
-        template=_CONCLUSION_TEMPLATE,
-    )
     cfg_mgr: ConfigManager = ctx.obj["config"]
     exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
     resolved_id = _resolve_exp_id(exman, exp_id)
@@ -1122,12 +1232,12 @@ def abort(ctx: click.Context, exp_id: str, summary: str, notes: str) -> None:
     exp.write_metadata()
 
     try:
-        finished = exman.finish(exp_id=resolved_id, notes=notes, summary=summary)
+        finished = exman.finish(
+            exp_id=resolved_id, notes=notes, summary="Aborted by user."
+        )
     except RuntimeError as exc:
         raise click.ClickException(str(exc)) from exc
     except LockedExperimentError as exc:
-        raise click.ClickException(str(exc)) from exc
-    except MissingSummaryError as exc:
         raise click.ClickException(str(exc)) from exc
 
     short_len = cfg_mgr.get("short_id_length", 8)
@@ -1171,6 +1281,7 @@ def show(ctx: click.Context, exp_id: str, full_id: bool) -> None:
         f"[bold cyan]Description:[/bold cyan] {exp.metadata.description or '-'}",
         f"[bold cyan]Summary:[/bold cyan] {exp.metadata.summary or '-'}",
         f"[bold cyan]Data Version:[/bold cyan] {exp.metadata.data_version or '-'}",
+        f"[bold cyan]Data Hash:[/bold cyan] {exp.metadata.data_hash or 'N/A'}",
         f"[bold cyan]Git Hash:[/bold cyan] {exp.metadata.git_hash or 'N/A'}",
         f"[bold cyan]Git Dirty:[/bold cyan] {exp.metadata.git_dirty}",
     ]
@@ -1203,12 +1314,19 @@ def show(ctx: click.Context, exp_id: str, full_id: bool) -> None:
     if exp.metadata.attempts:
         lines.append("")
         lines.append("[bold yellow]Attempts:[/bold yellow]")
-        lines.append(f"{'Run':<10} {'Start':<20} {'End':<20} {'Status'}")
+        lines.append(
+            f"{'Run':<10} {'Start':<20} {'End':<20} {'Status':<12} Command"
+        )
         for att in exp.metadata.attempts:
             name = att.reason or f"run_{att.sequence}"
             start = att.start_time[:19] if att.start_time else "-"
             end = att.end_time[:19] if att.end_time else "-"
-            lines.append(f"{name:<10} {start:<20} {end:<20} {att.status}")
+            cmd = " ".join(att.command) if att.command else "-"
+            if len(cmd) > 40:
+                cmd = cmd[:37] + "..."
+            lines.append(
+                f"{name:<10} {start:<20} {end:<20} {att.status:<12} {cmd}"
+            )
 
     _echo_lines(ctx, lines)
 
@@ -1389,6 +1507,11 @@ def suggest_groups(
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
 @click.option("--dry-run", is_flag=True, help="Show what would happen without acting")
 @click.option("--clear-trash", is_flag=True, help="Permanently empty the trash")
+@click.option(
+    "--mark-deletable",
+    is_flag=True,
+    help="Mark experiment for automatic removal when children are gone",
+)
 @click.pass_context
 def rm(
     ctx: click.Context,
@@ -1396,10 +1519,14 @@ def rm(
     yes: bool,
     dry_run: bool,
     clear_trash: bool,
+    mark_deletable: bool,
 ) -> None:
     """Remove an experiment to trash, or empty the trash.
 
     Experiments are moved to ``.trash/`` rather than deleted permanently.
+    Parent experiments with children cannot be removed directly; use
+    ``--mark-deletable`` to schedule them for cascade removal.
+
     Auto-purges the oldest trashed items if capacity limits are exceeded.
     """
     cfg_mgr: ConfigManager = ctx.obj["config"]
@@ -1435,18 +1562,33 @@ def rm(
         return
 
     if exp_id is None:
-        raise click.ClickException("EXP_ID is required unless --clear-trash is used.")
+        raise click.ClickException(
+            "EXP_ID is required unless --clear-trash is used."
+        )
 
     resolved_id = _resolve_exp_id(exman, exp_id)
     exp = exman.get(resolved_id)
     if exp is None:
         raise click.ClickException(f"Experiment '{resolved_id}' not found.")
 
+    short_len = cfg_mgr.get("short_id_length", 8)
+
+    if mark_deletable:
+        if dry_run:
+            click.echo(
+                f"Would mark experiment {resolved_id[:short_len]} as deletable."
+            )
+            return
+        exman.mark_deletable(resolved_id)
+        click.echo(
+            f"Marked experiment {resolved_id[:short_len]} as deletable."
+        )
+        return
+
     if not dry_run and not yes:
         if sys.stdout.isatty():
-            short_id = resolved_id[: cfg_mgr.get("short_id_length", 8)]
             click.echo(
-                f"This will move experiment '{short_id}' to trash."
+                f"This will move experiment '{resolved_id[:short_len]}' to trash."
             )
             if not click.confirm("Proceed?"):
                 click.echo("Aborted.")
@@ -1457,14 +1599,21 @@ def rm(
                 "Use --dry-run to preview."
             )
 
-    removed_exp, purged = exman.remove(resolved_id, dry_run=dry_run)
+    try:
+        removed_exp, purged = exman.remove(resolved_id, dry_run=dry_run)
+    except ValueError as exc:
+        msg = str(exc)
+        if "child experiment" in msg.lower():
+            raise click.ClickException(
+                f"{msg} Use --mark-deletable to schedule cascade removal."
+            ) from exc
+        raise click.ClickException(msg) from exc
 
     for path in purged:
         action = "would purge" if dry_run else "purged"
         click.echo(f"{action}: {path.name}")
 
     if removed_exp is not None:
-        short_len = cfg_mgr.get("short_id_length", 8)
         short_id = removed_exp.metadata.exp_id[:short_len]
         action = "would move" if dry_run else "moved"
         click.echo(f"{action} experiment {short_id} to trash.")
