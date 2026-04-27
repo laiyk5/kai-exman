@@ -188,7 +188,7 @@ kai-exman run --group train -- python train.py
 ```
 
 - Initializes in the specified group.
-- If `--resume` is also passed, see Section 3.2 (Resume Move).
+- If `--retry` or `--inherit` is also passed, see Section 3.2 (Resume Move).
 
 #### `list --tree`
 
@@ -242,7 +242,7 @@ kai-exman suggest-groups --threshold 0.6
 
 ### 3.2 Edge Case: Resume with Different Group
 
-**Scenario**: User runs `kai-exman run --resume <id> --group eval` where `<id>` is in group `train`.
+**Scenario**: User runs `kai-exman run --inherit <pid> --group eval` where `<pid>` is in group `train`.
 
 | Case | Behavior |
 | --- | --- |
@@ -368,7 +368,7 @@ Status: Attempt 1 running. Global status: `running`.
 Git hash unchanged, workspace clean.
 
 ```bash
-kai-exman run --resume a1b2c3d4 -- python train.py --epochs 100
+kai-exman run --retry a1b2c3d4 -- python train.py --epochs 100
 ```
 
 Result: Attempt 2 appended. Status reset to `running`. Env var `KAI_EXMAN_ATTEMPT_COUNT=2`.
@@ -384,7 +384,7 @@ kai-exman finish a1b2c3d4 --status success
 Code changed (new eval script). Logic-Dirty.
 
 ```bash
-kai-exman run --resume a1b2c3d4 --group eval -- python eval.py --model best.pt
+kai-exman run --inherit a1b2c3d4 --group eval -- python eval.py --model best.pt
 ```
 
 Result: New experiment `b2c3d4e5` in `/.exman/eval/`. `parent_id = a1b2c3d4`. Checkpoints symlinked.

@@ -32,9 +32,12 @@ All experiment operations are variations of **running a command**:
    * - ``run -d "..." -- cmd``
      - Fresh run: create a new experiment, execute the command.
      - Yes (new)
-   * - ``run --resume <id> -- cmd``
-     - Resume: auto-detect Case A (retry) or Case B (inherit) and execute.
-     - Case A: No. Case B: Yes (child)
+   * - ``run --retry <id> -- cmd``
+     - Retry (Case A): append attempt to a running experiment.
+     - No
+   * - ``run --inherit <pid> -- cmd``
+     - Inherit (Case B): create child from a finished parent.
+     - Yes (child)
    * - ``retry <id> -- cmd``
      - Standalone retry (Case A only). Append attempt to running experiment.
      - No (same exp)
@@ -153,7 +156,7 @@ Experiment State Machine
                |
     +----------+----------+
     |                     |
-    | run --resume <id>   | finish -s "..."
+    | run --retry <id>    | finish -s "..."
     | (clean git)         |
     v                     v
   +---------+       +----------+
@@ -161,7 +164,7 @@ Experiment State Machine
   |(new att)|       | (locked) |
   +----+----+       +----+-----+
        |                 |
-       |                 | run --resume <id>
+       |                 | run --inherit <pid>
        |                 v
        |            +---------+
        |            |  child  |
@@ -286,18 +289,17 @@ Error Paths (Blocked Transitions)
 
 .. code-block:: text
 
-   User: run --resume <aborted_id> -- python train.py
+   User: run --retry <aborted_id> -- python train.py
    CLI ──► resume() ──► ✗ ValueError:
          "Aborted experiments cannot be resumed."
 
-   User: run --resume <running_id> -- python train.py
-                       (git dirty)
+   User: run --inherit <running_id> -- python train.py
    CLI ──► resume() ──► ✗ ValueError:
-         "Workspace has diverged. Finish or abort first, then inherit."
+         "Experiment is still running. Use `run --retry` to append an attempt."
 
-   User: retry <running_id> -- python train.py
+   User: retry <aborted_id> -- python train.py
    CLI ──► resume() ──► ✗ ValueError:
-         "Only finished experiments can be inherited."
+         "Aborted experiments cannot be inherited."
 
    User: retry <aborted_id> -- python train.py
    CLI ──► resume() ──► ✗ ValueError:
@@ -324,18 +326,19 @@ Lifecycle Commands
    * - ``run -d "..." [--data-path PATH] -- cmd``
      - Fresh run: create a new experiment and execute the command.
      - ``description`` is **required**. ``--data-path`` is optional.
-   * - ``run --resume <id> [--data-path PATH] -- cmd``
-     - Resume from an existing experiment with auto Case A/B detection.
-       Case A (retry): append attempt if running + git clean.
-       Case B (inherit): create child if finished.
-     - For Case B, ``description`` is **required**.
+   * - ``run --retry <id> [--data-path PATH] -- cmd``
+     - Retry (Case A): append attempt to a running experiment.
+     - Exp must be ``running``, git **clean**.
+   * - ``run --inherit <pid> -d "..." [--data-path PATH] -- cmd``
+     - Inherit (Case B): create child from a finished parent.
+     - ``description`` is **required**.
    * - ``retry <id> [--data-path PATH] -- cmd``
      - Standalone retry (Case A only). Append attempt to a running experiment.
      - Exp must be ``running``, git **clean**.
-   * - ``finish <id> -s "..."``
+   * - ``finish [<id>] -s "..."``
      - Seal the experiment with a conclusion.
      - ``summary`` is **required**, at least one attempt.
-   * - ``abort <id>``
+   * - ``abort [<id>]``
      - Give up on the experiment. No summary needed.
      - At least one attempt. Locks permanently.
 
@@ -437,7 +440,7 @@ Retry Rules
      - Append new attempt to same experiment
    * - ❌
      - Exp is ``finished`` (locked)
-     - Cannot retry; use ``run --resume`` to inherit
+     - Cannot retry; use ``run --inherit`` to create a child.
    * - ❌
      - Exp is ``aborted`` (locked)
      - Permanently prohibited
@@ -563,7 +566,8 @@ D2: Unified ``run`` Command
 **Decision:** ``run`` has three mutually exclusive modes:
 
 1. **Default** (no flags) — create a new experiment.
-2. ``--resume <id>`` — auto-detect Case A (retry) or Case B (inherit).
+2. ``--retry <id>`` — explicit Case A (retry).
+3. ``--inherit <pid>`` — explicit Case B (inherit).
 
 A standalone ``retry`` command is retained for explicit Case A retries.
 
@@ -622,7 +626,7 @@ every trivial retry.
 D6: Inherit Requires Description
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-**Decision:** ``run --resume`` (Case B) always requires a
+**Decision:** ``run --inherit`` (Case B) always requires a
 ``description`` for the child experiment.
 
 **Rationale:**

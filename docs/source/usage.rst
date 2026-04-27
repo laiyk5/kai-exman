@@ -84,9 +84,9 @@ Run a command inside an experiment context (``--description`` is mandatory)::
     # Fresh experiment
     kai-exman run --description "training run" -- python train.py
 
-    # Resume an experiment (automatic Case A / Case B detection)
-    # In Case B (evolution), you must describe the fork; parent's description is not inherited.
-    kai-exman run --resume <exp_id> --description "tune LR after refactor" -- python train.py
+    # Inherit from a finished experiment (Case B)
+    # You must describe the fork; parent's description is not inherited.
+    kai-exman run --inherit <exp_id> --description "tune LR after refactor" -- python train.py
 
 List experiments::
 

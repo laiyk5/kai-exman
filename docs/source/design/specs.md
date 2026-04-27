@@ -367,7 +367,7 @@ The act of aborting is the complete statement. The summary is set to `"Aborted b
 Execute a command within an experiment context.
 
 ```bash
-kai-exman run [--description TEXT] [--tags TAGS] [--config PATH] [--data-path PATH] [--resume ID] [--group GROUP] -- COMMAND
+kai-exman run [--description TEXT] [--tags TAGS] [--config PATH] [--data-path PATH] [--retry ID] [--inherit PID] [--group GROUP] -- COMMAND
 ```
 
 | Option | Description |
@@ -376,7 +376,8 @@ kai-exman run [--description TEXT] [--tags TAGS] [--config PATH] [--data-path PA
 | `-t, --tags` | Comma-separated tags. |
 | `-c, --config` | Path to a YAML configuration file. |
 | `--data-path` | Dataset path for automatic BLAKE2b hash. |
-| `--resume` | Experiment ID to resume from. Triggers Case A/B auto-detection. |
+| `--retry` | Experiment ID to retry (Case A). Parent must be `running`. |
+| `--inherit` | Experiment ID to inherit from (Case B). Parent must be `finished`. |
 | `-g, --group` | Target group (ignored for Case A retry). |
 | `COMMAND` | Command and arguments to execute, after `--`. |
 
@@ -567,7 +568,7 @@ class Metadata(BaseModel):
 
 ### Context-Aware Resume Logic
 
-``ExMan.resume()`` and ``kai-exman run --resume <ID>`` implement automatic case detection:
+``ExMan.resume()`` with ``mode="auto"`` implements automatic case detection. The CLI uses explicit ``--retry`` and ``--inherit`` flags:
 
 1. Capture current Git state (hash + dirty flag on critical paths).
 2. Compare against the parent experiment's recorded ``git_hash``.
@@ -590,7 +591,7 @@ When ``kai-exman run`` executes a command, the following variables are injected:
 
 | Variable | Value | When Set |
 | --- | --- | --- |
-| ``KAI_EXMAN_RESUME`` | ``1`` | Always when ``--resume`` is used. |
+| ``KAI_EXMAN_RESUME`` | ``1`` | Always when ``--retry`` or ``--inherit`` is used. |
 | ``KAI_EXMAN_PARENT_PATH`` | Absolute path to parent experiment root | Case B (new inherited experiment). |
 | ``KAI_EXMAN_ATTEMPT_COUNT`` | Attempt sequence number (1, 2, 3...) | Case A (retry of existing experiment). |
 
@@ -615,12 +616,14 @@ When an experiment has multiple attempts, its global status (shown in ``list`` a
 kai-exman run -- python train.py
 
 # Resume (automatic Case A / Case B detection)
-kai-exman run --resume <exp_id> -- python train.py
+kai-exman run --retry <exp_id> -- python train.py
+kai-exman run --inherit <exp_id> --description "Fork" -- python train.py
 ```
 
 | Option | Description |
 | --- | --- |
-| ``--resume`` | Experiment ID to resume from. Triggers context-aware logic. |
+| ``--retry`` | Experiment ID to retry (Case A). Parent must be ``running``. |
+| ``--inherit`` | Experiment ID to inherit from (Case B). Parent must be ``finished``. |
 | ``-d, --description`` | Description for a new experiment (Case B). |
 | ``-t, --tags`` | Tags for a new experiment (Case B). |
 | ``-c, --config`` | Config YAML for a new experiment (Case B). |
