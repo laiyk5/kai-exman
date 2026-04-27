@@ -7,6 +7,7 @@ with git-log-style output, smart TTY detection, and Rich terminal rendering.
 from __future__ import annotations
 
 import getpass
+import io
 import os
 import subprocess
 import sys
@@ -407,6 +408,13 @@ def run(
     help="Sort order: asc (min first) or desc (max first)",
 )
 @click.option(
+    "--sort",
+    "sort_key",
+    type=click.Choice(["created", "finished", "group", "id"]),
+    default=None,
+    help="Sort experiments structurally",
+)
+@click.option(
     "--top",
     type=int,
     help="Show only the top N experiments",
@@ -429,7 +437,7 @@ def run(
 @click.option(
     "--tree",
     is_flag=True,
-    help="Display experiments grouped by group in tree view",
+    help="Display experiments in lineage tree view",
 )
 @click.option(
     "--full-id",
@@ -441,6 +449,7 @@ def list_cmd(
     ctx: click.Context,
     sort_by: str | None,
     order: str,
+    sort_key: str | None,
     top: int | None,
     oneline: bool,
     tag_filter: str | None,
@@ -448,11 +457,15 @@ def list_cmd(
     tree: bool,
     full_id: bool,
 ) -> None:
-    """List experiments, optionally sorted by a metric.
+    """List experiments with flexible view modes and sorting.
 
-    Displays experiments in a git-log-style format. In a TTY, uses
-    Rich for colors and a pager; otherwise outputs plain text.
+    Supports three view modes: default (log), --oneline (compact table),
+    and --tree (lineage topology). Sort by creation time, finish time,
+    group, ID, or by a specific metric.
     """
+    if sort_by and sort_key:
+        raise click.UsageError("--sort and --sort-by are mutually exclusive.")
+
     exman = ExMan(root=ctx.obj["path"])
     experiments = exman.list(group=group_filter)
 
@@ -463,39 +476,62 @@ def list_cmd(
         click.echo("No experiments found.")
         return
 
-    scored = []
-    for exp in experiments:
-        best = exp.compute_best_metrics()
-        score = None
-        if sort_by and sort_by in best:
-            score = best[sort_by]["max"] if order == "desc" else best[sort_by]["min"]
-        scored.append((exp, best, score))
+    metric_sort: tuple[str, str, dict[str, float]] | None = None
 
     if sort_by:
+        scored = []
+        scores: dict[str, float] = {}
+        for exp in experiments:
+            best = exp.compute_best_metrics()
+            score = None
+            if sort_by in best:
+                score = (
+                    best[sort_by]["max"]
+                    if order == "desc"
+                    else best[sort_by]["min"]
+                )
+            scored.append((exp, best, score))
+            if score is not None:
+                scores[exp.metadata.exp_id] = score
         scored.sort(
             key=lambda x: (x[2] is None, x[2] or 0),
-            reverse=False if order == "asc" else True,
+            reverse=order == "desc",
         )
-
-    if top:
-        scored = scored[:top]
+        if top:
+            scored = scored[:top]
+        experiments = [s[0] for s in scored]
+        metric_sort = (sort_by, order, scores)
+    else:
+        sort_key = sort_key or "created"
+        experiments = _sort_experiments(experiments, sort_key, order)
+        if top:
+            experiments = experiments[:top]
 
     short_len = ctx.obj["config"].get("short_id_length", 8)
+
     if tree:
+        roots, children_map = _build_lineage(experiments)
         if _use_pager(ctx):
-            _list_tree_rich(ctx, scored, full_id, short_len)
+            _render_tree_rich(roots, children_map, full_id, short_len)
         else:
-            _list_tree_plain(scored, full_id, short_len)
-    elif _use_pager(ctx):
-        _list_rich(ctx, scored, sort_by, order, oneline, full_id, short_len)
+            _render_tree_plain(roots, children_map, full_id, short_len)
+    elif oneline:
+        if _use_pager(ctx):
+            _render_oneline_rich(experiments, full_id, short_len, metric_sort)
+        else:
+            _render_oneline_plain(experiments, full_id, short_len, metric_sort)
     else:
-        _list_plain(scored, sort_by, order, oneline, full_id, short_len)
+        if _use_pager(ctx):
+            _render_log_rich(experiments, full_id, short_len, metric_sort)
+        else:
+            _render_log_plain(experiments, full_id, short_len, metric_sort)
 
 
 _STATUS_COLORS = {
     "success": "green",
-    "running": "blue",
+    "running": "yellow",
     "failed": "red",
+    "error": "red",
     "finished": "green",
 }
 
@@ -517,6 +553,23 @@ def _format_dt(iso: str) -> str:
         return dt.strftime("%a %b %d %H:%M:%S %Y %z")
     except (ValueError, TypeError):
         return iso[:19] if len(iso) >= 19 else iso
+
+
+def _format_dt_compact(iso: str) -> str:
+    """Convert an ISO timestamp to a compact display string.
+
+    Args:
+        iso: ISO 8601 formatted timestamp string.
+
+    Returns:
+        Formatted date string (e.g., 'Apr 27 10:00'),
+        or the truncated input if parsing fails.
+    """
+    try:
+        dt = datetime.fromisoformat(iso)
+        return dt.strftime("%b %d %H:%M")
+    except (ValueError, TypeError):
+        return iso[:16] if len(iso) >= 16 else iso
 
 
 def _params_line(config: dict[str, Any]) -> str:
@@ -565,51 +618,130 @@ def _display_id(exp_id: str, full_id: bool, short_length: int = 8) -> str:
     return exp_id if full_id else exp_id[:short_length]
 
 
-def _list_tree_rich(
-    ctx: click.Context,
-    scored: list[tuple[Experiment, dict[str, dict[str, float]], float | None]],
-    full_id: bool,
-    short_length: int,
-) -> None:
-    """Render experiment list in tree view with Rich.
+def _sort_experiments(
+    experiments: list[Experiment],
+    sort_key: str,
+    order: str,
+) -> list[Experiment]:
+    """Sort experiments by a structural key.
 
     Args:
-        ctx: Click context for color settings.
-        scored: List of (experiment, best_metrics, score) tuples.
-        full_id: Whether to display full 16-character IDs.
-        short_length: Number of characters for abbreviated IDs.
+        experiments: List of experiments to sort.
+        sort_key: Structural sort key (created, finished, group, id).
+        order: Sort direction ("asc" or "desc").
+
+    Returns:
+        Sorted list of experiments.
     """
-    console = Console(force_terminal=True, record=True)
+    reverse = order == "desc"
 
-    # Group experiments by group name
-    groups: dict[str, list[tuple[Experiment, Any, Any]]] = {}
-    for item in scored:
-        g = item[0].metadata.group
-        groups.setdefault(g, []).append(item)
-
-    for group_name in sorted(groups.keys()):
-        console.print(f"[bold cyan]{group_name}/[/bold cyan]")
-        for exp, _best, _score in groups[group_name]:
-            status_color = _STATUS_COLORS.get(exp.metadata.status, "white")
-            prefix = "-> " if exp.metadata.parent_id else "    "
-            disp_id = _display_id(exp.metadata.exp_id, full_id, short_length)
-            desc = exp.metadata.description or "[dim](no description)[/dim]"
-            tags_part = ""
-            if exp.metadata.tags:
-                tags_display = ", ".join(exp.metadata.tags)
-                tags_part = f" [bold magenta][{tags_display}][/bold magenta]"
-            line = (
-                f"{prefix}[yellow]{disp_id}[/yellow]  "
-                f"[{status_color}]{exp.metadata.status}[/{status_color}]  "
-                f"{desc}{tags_part}"
-            )
-            console.print(line)
+    def key_fn(exp: Experiment) -> Any:
+        if sort_key == "created":
+            return exp.metadata.timestamp
+        if sort_key == "finished":
             if exp.metadata.attempts:
-                attempt_strs = [
-                    f"{a.reason or f'run_{a.sequence}'} ({a.status})"
-                    for a in exp.metadata.attempts
-                ]
-                console.print(f"        Attempts: {', '.join(attempt_strs)}")
+                last_end = exp.metadata.attempts[-1].end_time
+                if last_end:
+                    return last_end
+            return exp.metadata.timestamp
+        if sort_key == "group":
+            return exp.metadata.group
+        if sort_key == "id":
+            return exp.metadata.exp_id
+        return exp.metadata.timestamp
+
+    return sorted(experiments, key=key_fn, reverse=reverse)
+
+
+def _build_lineage(
+    experiments: list[Experiment],
+) -> tuple[list[Experiment], dict[str, list[Experiment]]]:
+    """Build a lineage graph from experiments.
+
+    Args:
+        experiments: List of experiments.
+
+    Returns:
+        Tuple of (root_experiments, children_map) where children_map
+        maps parent_id to a list of child experiments.
+    """
+    exp_map = {e.metadata.exp_id: e for e in experiments}
+    roots: list[Experiment] = []
+    children_map: dict[str, list[Experiment]] = {}
+
+    for exp in experiments:
+        parent_id = exp.metadata.parent_id
+        if parent_id and parent_id in exp_map:
+            children_map.setdefault(parent_id, []).append(exp)
+        else:
+            roots.append(exp)
+
+    return roots, children_map
+
+
+def _render_log_rich(
+    experiments: list[Experiment],
+    full_id: bool,
+    short_len: int,
+    metric_sort: tuple[str, str, dict[str, float]] | None = None,
+) -> None:
+    """Render experiment list in git-log style with Rich.
+
+    Args:
+        experiments: List of experiments to render.
+        full_id: Whether to display full 16-character IDs.
+        short_len: Number of characters for abbreviated IDs.
+        metric_sort: Optional (name, order, exp_id->score) tuple.
+    """
+    console = Console(file=io.StringIO(), force_terminal=True, record=True)
+
+    for exp in experiments:
+        status_color = _STATUS_COLORS.get(exp.metadata.status, "white")
+        dt = _format_dt(exp.metadata.timestamp)
+        desc = exp.metadata.description or ""
+        params = _params_line(exp.config)
+
+        # Header: experiment <hash> (tag: ...) [status]
+        tag_part = ""
+        if exp.metadata.tags:
+            tags_display = ", ".join(exp.metadata.tags)
+            tag_part = f" [magenta](tag: {tags_display})[/magenta]"
+        disp_id = _display_id(exp.metadata.exp_id, full_id, short_len)
+        console.print(
+            f"[yellow]experiment {disp_id}[/yellow]"
+            f"{tag_part}"
+            f" [[{status_color}]{exp.metadata.status}[/{status_color}]]"
+        )
+
+        if exp.metadata.parent_id:
+            parent_short = exp.metadata.parent_id[:short_len]
+            console.print(f"[dim]Parent: {parent_short}[/dim]")
+
+        # Metadata
+        console.print(f"Author: {getpass.getuser()}")
+        console.print(f"Date:   {dt}  |  Group: {exp.metadata.group}")
+
+        # Body
+        console.print("")
+        if desc:
+            console.print(desc)
+        else:
+            console.print("[dim](No description provided)[/dim]")
+
+        # Footer: params / score
+        footer_parts = []
+        if params:
+            footer_parts.append(f"Params: [blue]{params}[/blue]")
+        if metric_sort:
+            name, _order, scores = metric_sort
+            score = scores.get(exp.metadata.exp_id)
+            score_str = f"{score:.4f}" if score is not None else "-"
+            footer_parts.append(f"[yellow]{name}={score_str}[/yellow]")
+        if footer_parts:
+            console.print("")
+            console.print(" | ".join(footer_parts))
+
+        # Blank line between experiments
         console.print("")
 
     text = console.export_text(styles=True)
@@ -617,237 +749,252 @@ def _list_tree_rich(
     click.echo_via_pager(text)
 
 
-def _list_tree_plain(
-    scored: list[tuple[Experiment, dict[str, dict[str, float]], float | None]],
+def _render_log_plain(
+    experiments: list[Experiment],
     full_id: bool,
-    short_length: int,
+    short_len: int,
+    metric_sort: tuple[str, str, dict[str, float]] | None = None,
 ) -> None:
-    """Render experiment list in tree view as plain text.
+    """Render experiment list in git-log style as plain text.
 
     Args:
-        scored: List of (experiment, best_metrics, score) tuples.
+        experiments: List of experiments to render.
         full_id: Whether to display full 16-character IDs.
-        short_length: Number of characters for abbreviated IDs.
+        short_len: Number of characters for abbreviated IDs.
+        metric_sort: Optional (name, order, exp_id->score) tuple.
     """
-    groups: dict[str, list[tuple[Experiment, Any, Any]]] = {}
-    for item in scored:
-        g = item[0].metadata.group
-        groups.setdefault(g, []).append(item)
+    for exp in experiments:
+        dt = _format_dt(exp.metadata.timestamp)
+        desc = exp.metadata.description or ""
+        params = _params_line(exp.config)
 
-    for group_name in sorted(groups.keys()):
-        click.echo(f"{group_name}/")
-        for exp, _best, _score in groups[group_name]:
-            prefix = "-> " if exp.metadata.parent_id else "    "
-            disp_id = _display_id(exp.metadata.exp_id, full_id, short_length)
-            desc = exp.metadata.description or "(no description)"
-            tags_part = ""
-            if exp.metadata.tags:
-                tags_display = ", ".join(exp.metadata.tags)
-                tags_part = f" [{tags_display}]"
-            line = (
-                f"{prefix}{disp_id}  {exp.metadata.status}  {desc}{tags_part}"
-            )
-            click.echo(line)
-            if exp.metadata.attempts:
-                attempt_strs = [
-                    f"{a.reason or f'run_{a.sequence}'} ({a.status})"
-                    for a in exp.metadata.attempts
-                ]
-                click.echo(f"        Attempts: {', '.join(attempt_strs)}")
+        # Header
+        tag_part = ""
+        if exp.metadata.tags:
+            tags_display = ", ".join(exp.metadata.tags)
+            tag_part = f" (tag: {tags_display})"
+        disp_id = _display_id(exp.metadata.exp_id, full_id, short_len)
+        status_part = f"[{exp.metadata.status}]"
+        click.echo(f"experiment {disp_id}{tag_part} {status_part}")
+
+        if exp.metadata.parent_id:
+            parent_short = exp.metadata.parent_id[:short_len]
+            click.echo(f"Parent: {parent_short}")
+
+        click.echo(f"Author: {getpass.getuser()}")
+        click.echo(f"Date:   {dt}  |  Group: {exp.metadata.group}")
+        click.echo("")
+        if desc:
+            click.echo(desc)
+        else:
+            click.echo("(No description provided)")
+
+        footer_parts = []
+        if params:
+            footer_parts.append(f"Params: {params}")
+        if metric_sort:
+            name, _order, scores = metric_sort
+            score = scores.get(exp.metadata.exp_id)
+            score_str = f"{score:.4f}" if score is not None else "-"
+            footer_parts.append(f"{name}={score_str}")
+        if footer_parts:
+            click.echo("")
+            click.echo(" | ".join(footer_parts))
+
         click.echo("")
 
 
-def _list_rich(
-    ctx: click.Context,
-    scored: list[tuple[Experiment, dict[str, dict[str, float]], float | None]],
-    sort_by: str | None,
-    order: str,
-    oneline: bool,
+def _render_oneline_rich(
+    experiments: list[Experiment],
     full_id: bool,
-    short_length: int,
+    short_len: int,
+    metric_sort: tuple[str, str, dict[str, float]] | None = None,
 ) -> None:
-    """Render experiment list with Rich and pipe through a pager.
+    """Render experiment list in compact one-line format with Rich.
 
     Args:
-        ctx: Click context for color settings.
-        scored: List of (experiment, best_metrics, score) tuples.
-        sort_by: Metric name used for sorting, if any.
-        order: Sort order string ("asc" or "desc").
-        oneline: Whether to use compact one-line output.
+        experiments: List of experiments to render.
         full_id: Whether to display full 16-character IDs.
-        short_length: Number of characters for abbreviated IDs.
+        short_len: Number of characters for abbreviated IDs.
+        metric_sort: Optional (name, order, exp_id->score) tuple.
     """
-    console = Console(force_terminal=True, record=True)
+    console = Console(file=io.StringIO(), force_terminal=True, record=True)
 
-    if oneline:
-        for exp, _best, score in scored:
-            date_str = _oneline_dt(exp.metadata.timestamp)
-            status_color = _STATUS_COLORS.get(exp.metadata.status, "white")
-            status_label = exp.metadata.status.upper()
+    for exp in experiments:
+        status_color = _STATUS_COLORS.get(exp.metadata.status, "white")
+        status_label = exp.metadata.status.upper()
+        disp_id = _display_id(exp.metadata.exp_id, full_id, short_len)
+        dt = _oneline_dt(exp.metadata.timestamp)
+        id_width = 16 if full_id else short_len
 
-            if exp.metadata.description:
-                desc = exp.metadata.description
-            else:
-                desc = "[dim](no description)[/dim]"
+        desc = exp.metadata.description or "[dim](no description)[/dim]"
 
-            tags_part = ""
-            if exp.metadata.tags:
-                tags_display = ", ".join(exp.metadata.tags)
-                tags_part = f"[bold magenta][{tags_display}][/bold magenta]  "
+        tags_part = ""
+        if exp.metadata.tags:
+            tags = ", ".join(exp.metadata.tags)
+            tags_part = f"[magenta][{tags}][/magenta]  "
 
-            prefix = "[dim]->[/dim] " if exp.metadata.parent_id else ""
-            disp_id = _display_id(exp.metadata.exp_id, full_id, short_length)
-            id_width = 16 if full_id else short_length
-            line = (
-                f"{prefix}[yellow]{disp_id:{id_width}}[/yellow]  "
-                f"[cyan]{date_str:16}[/cyan]  "
-                f"[{status_color}]{status_label:10}[/{status_color}]  "
-                f"{tags_part}"
-                f"{desc}"
-            )
-            if sort_by:
-                score_str = f"{score:.4f}" if score is not None else "-"
-                line += f"  [{sort_by}={score_str}]"
-            console.print(line)
-    else:
-        for exp, _best, score in scored:
-            status_color = _STATUS_COLORS.get(exp.metadata.status, "white")
-            dt = _format_dt(exp.metadata.timestamp)
-            desc = exp.metadata.description or ""
-            params = _params_line(exp.config)
+        line = (
+            f"[yellow]{disp_id:{id_width}}[/yellow]  "
+            f"[cyan]{dt:16}[/cyan]  "
+            f"[{status_color}]{status_label:8}[/{status_color}]  "
+            f"[cyan]{exp.metadata.group:10}[/cyan]  "
+            f"{tags_part}{desc}"
+        )
 
-            # Header: experiment <hash> (tag: ...) [status]
-            tag_part = ""
-            if exp.metadata.tags:
-                tags_display = ", ".join(exp.metadata.tags)
-                tag_part = f" [magenta](tag: {tags_display})[/magenta]"
-            prefix = "-> " if exp.metadata.parent_id else ""
-            disp_id = _display_id(exp.metadata.exp_id, full_id, short_length)
-            console.print(
-                f"{prefix}[yellow]experiment {disp_id}[/yellow]"
-                f"{tag_part}"
-                f" [[{status_color}]{exp.metadata.status}[/{status_color}]]"
-            )
+        if metric_sort:
+            name, _order, scores = metric_sort
+            score = scores.get(exp.metadata.exp_id)
+            score_str = f"{score:.4f}" if score is not None else "-"
+            line += f"  [{name}={score_str}]"
 
-            if exp.metadata.parent_id:
-                parent_short = exp.metadata.parent_id[:short_length]
-                console.print(
-                    f"    [dim]inherited from {parent_short}[/dim]"
-                )
-
-            # Metadata
-            author = getpass.getuser()
-            console.print(f"Author: {author}")
-            console.print(f"Date:   {dt}")
-
-            # Body: blank line, then indented description
-            console.print("")
-            if desc:
-                console.print(f"    {desc}")
-            else:
-                console.print("    [dim](No description provided)[/dim]")
-
-            # Footer: indented params / score
-            footer_parts = []
-            if params:
-                footer_parts.append(f"Params: [blue]{params}[/blue]")
-            if sort_by:
-                score_str = f"{score:.4f}" if score is not None else "-"
-                footer_parts.append(f"[yellow]{sort_by}={score_str}[/yellow]")
-            if footer_parts:
-                console.print("")
-                console.print(f"    {' | '.join(footer_parts)}")
-
-            # Blank line between experiments
-            console.print("")
+        console.print(line)
 
     text = console.export_text(styles=True)
     os.environ.setdefault("LESS", "-R")
     click.echo_via_pager(text)
 
 
-def _list_plain(
-    scored: list[tuple[Experiment, dict[str, dict[str, float]], float | None]],
-    sort_by: str | None,
-    order: str,
-    oneline: bool,
+def _render_oneline_plain(
+    experiments: list[Experiment],
     full_id: bool,
-    short_length: int,
+    short_len: int,
+    metric_sort: tuple[str, str, dict[str, float]] | None = None,
 ) -> None:
-    """Render experiment list as plain text.
+    """Render experiment list in compact one-line format as plain text.
 
     Args:
-        scored: List of (experiment, best_metrics, score) tuples.
-        sort_by: Metric name used for sorting, if any.
-        order: Sort order string ("asc" or "desc").
-        oneline: Whether to use compact one-line output.
+        experiments: List of experiments to render.
         full_id: Whether to display full 16-character IDs.
-        short_length: Number of characters for abbreviated IDs.
+        short_len: Number of characters for abbreviated IDs.
+        metric_sort: Optional (name, order, exp_id->score) tuple.
     """
-    if oneline:
-        for exp, _best, score in scored:
-            date_str = _oneline_dt(exp.metadata.timestamp)
-            status_label = exp.metadata.status.upper()
-            desc = exp.metadata.description or "(no description)"
+    for exp in experiments:
+        status_label = exp.metadata.status.upper()
+        disp_id = _display_id(exp.metadata.exp_id, full_id, short_len)
+        dt = _oneline_dt(exp.metadata.timestamp)
+        id_width = 16 if full_id else short_len
 
-            tags_part = ""
-            if exp.metadata.tags:
-                tags_display = ", ".join(exp.metadata.tags)
-                tags_part = f"[{tags_display}]  "
+        desc = exp.metadata.description or "(no description)"
 
-            prefix = "-> " if exp.metadata.parent_id else ""
-            disp_id = _display_id(exp.metadata.exp_id, full_id, short_length)
-            id_width = 16 if full_id else short_length
-            line = (
-                f"{prefix}{disp_id:{id_width}}  {date_str:16}  {status_label:10}  "
-                f"{tags_part}{desc}"
-            )
-            if sort_by:
-                score_str = f"{score:.4f}" if score is not None else "-"
-                line += f"  [{sort_by}={score_str}]"
-            click.echo(line)
-    else:
-        for exp, _best, score in scored:
-            dt = _format_dt(exp.metadata.timestamp)
-            desc = exp.metadata.description or ""
-            params = _params_line(exp.config)
+        tags_part = ""
+        if exp.metadata.tags:
+            tags = ", ".join(exp.metadata.tags)
+            tags_part = f"[{tags}]  "
 
-            # Header
-            tag_part = ""
-            if exp.metadata.tags:
-                tags_display = ", ".join(exp.metadata.tags)
-                tag_part = f" (tag: {tags_display})"
-            prefix = "-> " if exp.metadata.parent_id else ""
-            disp_id = _display_id(exp.metadata.exp_id, full_id, short_length)
-            status_part = f"[{exp.metadata.status}]"
-            click.echo(f"{prefix}experiment {disp_id}{tag_part} {status_part}")
-            if exp.metadata.parent_id:
-                parent_short = exp.metadata.parent_id[:short_length]
-                click.echo(f"    inherited from {parent_short}")
-            click.echo(f"Author: {getpass.getuser()}")
-            click.echo(f"Date:   {dt}")
-            click.echo("")
-            if desc:
-                click.echo(f"    {desc}")
-            else:
-                click.echo("    (No description provided)")
+        line = (
+            f"{disp_id:{id_width}}  {dt:16}  {status_label:8}  "
+            f"{exp.metadata.group:10}  {tags_part}{desc}"
+        )
 
-            footer_parts = []
-            if params:
-                footer_parts.append(f"Params: {params}")
-            if sort_by:
-                score_str = f"{score:.4f}" if score is not None else "-"
-                footer_parts.append(f"{sort_by}={score_str}")
-            if footer_parts:
-                click.echo("")
-                click.echo(f"    {' | '.join(footer_parts)}")
+        if metric_sort:
+            name, _order, scores = metric_sort
+            score = scores.get(exp.metadata.exp_id)
+            score_str = f"{score:.4f}" if score is not None else "-"
+            line += f"  [{name}={score_str}]"
 
-            click.echo("")
+        click.echo(line)
+
+
+def _render_tree_rich(
+    roots: list[Experiment],
+    children_map: dict[str, list[Experiment]],
+    full_id: bool,
+    short_len: int,
+) -> None:
+    """Render experiment lineage tree with Rich.
+
+    Args:
+        roots: Root experiments (no parent in the set).
+        children_map: Maps parent_id to child experiments.
+        full_id: Whether to display full 16-character IDs.
+        short_len: Number of characters for abbreviated IDs.
+    """
+    console = Console(file=io.StringIO(), force_terminal=True, record=True)
+
+    def _render_node(
+        exp: Experiment,
+        prefix: str,
+        is_last: bool,
+        is_root: bool,
+    ) -> None:
+        status_color = _STATUS_COLORS.get(exp.metadata.status, "white")
+        status_label = exp.metadata.status.upper()
+        disp_id = _display_id(exp.metadata.exp_id, full_id, short_len)
+        desc = exp.metadata.description or "[dim](no description)[/dim]"
+
+        if is_root:
+            connector = "[bold]●[/bold]"
+        else:
+            connector = "└── ○" if is_last else "├── ○"
+
+        line = (
+            f"{prefix}{connector} [yellow]{disp_id}[/yellow]  "
+            f"[{status_color}]{status_label}[/{status_color}]  {desc}"
+        )
+        console.print(line)
+
+        children = children_map.get(exp.metadata.exp_id, [])
+        for i, child in enumerate(children):
+            child_is_last = i == len(children) - 1
+            child_prefix = prefix + ("    " if is_last else "│   ")
+            _render_node(child, child_prefix, child_is_last, is_root=False)
+
+    for root in roots:
+        _render_node(root, "", is_last=True, is_root=True)
+        console.print("")
+
+    text = console.export_text(styles=True)
+    os.environ.setdefault("LESS", "-R")
+    click.echo_via_pager(text)
+
+
+def _render_tree_plain(
+    roots: list[Experiment],
+    children_map: dict[str, list[Experiment]],
+    full_id: bool,
+    short_len: int,
+) -> None:
+    """Render experiment lineage tree as plain text.
+
+    Args:
+        roots: Root experiments (no parent in the set).
+        children_map: Maps parent_id to child experiments.
+        full_id: Whether to display full 16-character IDs.
+        short_len: Number of characters for abbreviated IDs.
+    """
+
+    def _render_node(
+        exp: Experiment,
+        prefix: str,
+        is_last: bool,
+        is_root: bool,
+    ) -> None:
+        status_label = exp.metadata.status.upper()
+        disp_id = _display_id(exp.metadata.exp_id, full_id, short_len)
+        desc = exp.metadata.description or "(no description)"
+
+        if is_root:
+            connector = "*"
+        else:
+            connector = "`-- o" if is_last else "|-- o"
+
+        click.echo(f"{prefix}{connector} {disp_id}  {status_label}  {desc}")
+
+        children = children_map.get(exp.metadata.exp_id, [])
+        for i, child in enumerate(children):
+            child_is_last = i == len(children) - 1
+            child_prefix = prefix + ("    " if is_last else "|   ")
+            _render_node(child, child_prefix, child_is_last, is_root=False)
+
+    for root in roots:
+        _render_node(root, "", is_last=True, is_root=True)
+        click.echo("")
 
 
 @cli.command()
 @click.argument("exp_id")
-@click.option("--status", "-s", default="finished", help="Final status")
+@click.option("--status", "-s", default="success", help="Final status")
 @click.option("--notes", "-n", default="", help="Post-mortem notes")
 @click.pass_context
 def finish(ctx: click.Context, exp_id: str, status: str, notes: str) -> None:

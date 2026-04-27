@@ -20,6 +20,15 @@ from kaiexman.experiment import Experiment, validate_group, validate_tag
 from kaiexman.models import Attempt, Metadata
 
 
+class LockedExperimentError(RuntimeError):
+    """Raised when an operation is requested on an experiment that has
+    already reached a terminal state.
+    """
+
+
+_TERMINAL_STATUSES: set[str] = {"success", "finished"}
+
+
 class ExMan:
     """Manager for experiment lifecycle operations.
 
@@ -171,6 +180,7 @@ class ExMan:
                 "group": meta.group,
                 "parent_id": meta.parent_id,
                 "tags": list(meta.tags),
+                "status": meta.status,
             }
             for tag in meta.tags:
                 index["tag_index"].setdefault(tag, []).append(meta.exp_id)
@@ -229,6 +239,7 @@ class ExMan:
             "group": meta.group,
             "parent_id": meta.parent_id,
             "tags": list(meta.tags),
+            "status": meta.status,
         }
         for tag in meta.tags:
             index["tag_index"].setdefault(tag, [])
@@ -359,7 +370,7 @@ class ExMan:
     def finish(
         self,
         exp_id: str,
-        status: str = "finished",
+        status: str = "success",
         notes: str = "",
     ) -> Experiment | None:
         """Finalize an experiment and generate its summary.
@@ -509,6 +520,13 @@ class ExMan:
             and current_hash == parent.metadata.git_hash
             and not current_dirty
         ):
+            if parent.metadata.status in _TERMINAL_STATUSES:
+                raise LockedExperimentError(
+                    f"Experiment {parent.metadata.exp_id} is already in a "
+                    f"terminal state ({parent.metadata.status}). Use --resume "
+                    "to create a new iteration or delete the existing results "
+                    "to re-run."
+                )
             if group is not None and group != parent.metadata.group:
                 warnings.warn(
                     f"--group ignored for Case A resume; experiment remains "

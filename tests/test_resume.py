@@ -308,4 +308,4 @@ def test_list_shows_inheritance_indicator(tmp_exman_path, monkeypatch):
         ],
     )
     assert result.exit_code == 0
-    assert "->" in result.output
+    assert "Parent:" in result.output

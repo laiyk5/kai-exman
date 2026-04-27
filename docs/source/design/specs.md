@@ -139,8 +139,14 @@ Follow Git's minimalist and industrial aesthetic. No unnecessary borders, no fla
 
 All commands check `sys.stdout.isatty()` and adapt their output:
 
-- **For Humans (TTY)**: Uses `rich` for colors, panels, and tables. `list` pipes long output through a pager (`less -R`).
+- **For Humans (TTY)**: Uses `rich` for colors, panels, and tables.
 - **For Agents / Pipes**: Outputs clean plain text without ANSI codes or decorative framing.
+
+### Pager Policy
+
+Any command that produces output which may exceed one terminal screen **must** pipe through a pager when `stdout.isatty()` is `True`. The pager is configured with `LESS=-R` to preserve ANSI color codes.
+
+This applies to all list-style commands (`list`, `list --oneline`, `list --tree`) and any future command that renders tabular or multi-line experiment data. Plain-text (non-TTY) output never uses a pager; it streams directly to `stdout` for agent consumption.
 
 ### Layout Standards
 

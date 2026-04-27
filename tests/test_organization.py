@@ -11,6 +11,7 @@ sys.path.insert(0, str(src))
 
 from kaiexman import ExMan
 from kaiexman.experiment import Experiment, validate_group
+from kaiexman.manager import LockedExperimentError
 
 # ---------------------------------------------------------------------------
 # validate_group
@@ -354,3 +355,75 @@ def test_experiment_root_is_mutable():
     exp = Experiment(root=Path("/old/path"), metadata=meta)
     exp.root = Path("/new/path")
     assert str(exp.root) == "/new/path"
+
+
+# ---------------------------------------------------------------------------
+# Terminal state lock
+# ---------------------------------------------------------------------------
+
+
+def test_resume_blocks_terminal_success(tmp_exman_path, monkeypatch):
+    exman = ExMan(root=tmp_exman_path)
+    parent = exman.init(description="parent", group="train")
+    parent_hash = parent.metadata.git_hash
+
+    # Finish the experiment (terminal state)
+    exman.finish(parent.metadata.exp_id, status="success")
+
+    monkeypatch.setattr(
+        exman, "_current_git_state", lambda: (parent_hash, False)
+    )
+
+    with pytest.raises(LockedExperimentError, match="terminal state"):
+        exman.resume(parent.metadata.exp_id)
+
+
+def test_resume_blocks_terminal_finished(tmp_exman_path, monkeypatch):
+    exman = ExMan(root=tmp_exman_path)
+    parent = exman.init(description="parent", group="train")
+    parent_hash = parent.metadata.git_hash
+
+    # Finish with legacy "finished" status (still terminal)
+    exman.finish(parent.metadata.exp_id, status="finished")
+
+    monkeypatch.setattr(
+        exman, "_current_git_state", lambda: (parent_hash, False)
+    )
+
+    with pytest.raises(LockedExperimentError, match="terminal state"):
+        exman.resume(parent.metadata.exp_id)
+
+
+def test_resume_allows_non_terminal(tmp_exman_path, monkeypatch):
+    exman = ExMan(root=tmp_exman_path)
+    parent = exman.init(description="parent", group="train")
+    parent_hash = parent.metadata.git_hash
+
+    monkeypatch.setattr(
+        exman, "_current_git_state", lambda: (parent_hash, False)
+    )
+
+    # Experiment is still "running" — should be allowed
+    exp, is_new, attempt_num = exman.resume(parent.metadata.exp_id)
+    assert is_new is False
+    assert attempt_num == 1
+    assert len(exp.metadata.attempts) == 1
+
+
+def test_finish_defaults_to_success(tmp_exman_path):
+    exman = ExMan(root=tmp_exman_path)
+    exp = exman.init(description="test")
+    finished = exman.finish(exp.metadata.exp_id)
+    assert finished is not None
+    assert finished.metadata.status == "success"
+
+
+def test_index_includes_status(tmp_exman_path):
+    exman = ExMan(root=tmp_exman_path)
+    exp = exman.init(description="test", group="train")
+    exman.finish(exp.metadata.exp_id, status="success")
+
+    index = exman._load_index()
+    assert index is not None
+    entry = index["experiments"][exp.metadata.exp_id]
+    assert entry["status"] == "success"
