@@ -139,8 +139,10 @@ Follow Git's minimalist and industrial aesthetic. No unnecessary borders, no fla
 
 All commands check `sys.stdout.isatty()` and adapt their output:
 
-- **For Humans (TTY)**: Uses `rich` for colors, panels, and tables.
-- **For Agents / Pipes**: Outputs clean plain text without ANSI codes or decorative framing.
+- **For Humans (TTY)**: Rich markup is rendered as ANSI color codes.
+- **For Agents / Pipes**: Rich markup tags are stripped, producing clean plain text without ANSI codes.
+
+The output structure is **identical** in both modes. Only colors differ. Rich `Table` and `Panel` are intentionally avoided because they reorganize information between interactive and non-interactive shells, increasing maintenance burden and confusion. All commands render via a single code path (`_echo_lines()`) that leverages Rich's built-in markup stripping when `force_terminal=False`.
 
 ### Pager Policy
 
