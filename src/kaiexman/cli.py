@@ -738,6 +738,15 @@ def _oneline_dt(iso: str) -> str:
         return iso[:16] if len(iso) >= 16 else iso
 
 
+def _first_line(text: str) -> str:
+    """Return the first non-empty line, or empty string."""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return ""
+
+
 def _display_id(exp_id: str, full_id: bool, short_length: int = 8) -> str:
     """Return the experiment ID to display.
 
@@ -857,9 +866,10 @@ def _build_log_lines(
         lines.append(f"Date:   {dt}  |  Group: {exp.metadata.group}")
         lines.append("")
 
-        # Prominent description at the top
-        if desc:
-            lines.append(f"[bold cyan]Intent:[/bold cyan] {desc}")
+        # Prominent description at the top (first line only, indented)
+        first_desc = _first_line(desc)
+        if first_desc:
+            lines.append(f"[bold cyan]Intent:[/bold cyan] {first_desc}")
         else:
             lines.append("[dim](No description provided)[/dim]")
 
@@ -875,10 +885,11 @@ def _build_log_lines(
             lines.append("")
             lines.append(" | ".join(footer_parts))
 
-        # Summary at the bottom for sealed experiments
-        if summary:
+        # Summary at the bottom for sealed experiments (first line only)
+        first_summary = _first_line(summary)
+        if first_summary:
             lines.append("")
-            lines.append(f"[bold green]Conclusion:[/bold green] {summary}")
+            lines.append(f"[bold green]Conclusion:[/bold green] {first_summary}")
 
         lines.append("")
     return lines
@@ -909,7 +920,8 @@ def _build_oneline_lines(
         dt = _oneline_dt(exp.metadata.timestamp)
         id_width = 16 if full_id else short_len
 
-        desc = exp.metadata.description or "[dim](no description)[/dim]"
+        raw_desc = exp.metadata.description or ""
+        desc = _first_line(raw_desc) or "[dim](no description)[/dim]"
 
         tags_part = ""
         if exp.metadata.tags:
@@ -969,8 +981,9 @@ def _build_tree_lines(
         status_label = exp.metadata.status.upper()
         disp_id = _display_id(exp.metadata.exp_id, full_id, short_len)
         raw_desc = exp.metadata.description or ""
-        if raw_desc:
-            desc = raw_desc if len(raw_desc) <= 30 else raw_desc[:27] + "..."
+        first_desc = _first_line(raw_desc)
+        if first_desc:
+            desc = first_desc if len(first_desc) <= 30 else first_desc[:27] + "..."
         else:
             desc = "[dim](no description)[/dim]"
 
