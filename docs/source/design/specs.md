@@ -79,11 +79,17 @@ class Metadata(BaseModel):
     git_hash: str = ""                   # Git commit hash (empty if unavailable)
     git_dirty: bool = False              # True if working tree had uncommitted changes
     tags: list[str] = []                 # Categorical tags
-    data_version: str = ""               # Data version or hash for reproducibility
+    data_version: str = ""               # Manual data version string (legacy)
+    data_hash: str = ""                  # BLAKE2b hash of --data-path (auto-computed)
     description: str = ""                # Human-readable description
-    status: str = "running"              # Current status: running, success, failed, aborted
+    status: str = "running"              # Current status: draft, running, finished, aborted
     finished_at: str = ""               # ISO timestamp when the lab record was sealed
-    locked: bool = False                 # True once finish() seals the record
+    locked: bool = False                 # True once finish() or abort() seals the record
+    summary: str = ""                    # Conclusion written by finish()
+    parent_id: str = ""                  # Set for inherited experiments (Case B)
+    attempts: list[Attempt] = []         # Execution attempts for resumption tracking
+    group: str = "default"               # Physical group name (filesystem subdirectory)
+    deletable: bool = False              # Marked for cascade removal when childless
 ```
 
 ### Status Lifecycle
@@ -136,8 +142,9 @@ outputs/
     ├── metadata.json
     ├── config.yaml          # Optional experiment configuration
     ├── env.txt              # pip freeze snapshot
+    ├── code.patch           # Present if git_dirty at init time
     ├── metrics.jsonl        # Append-only metrics log
-    ├── summary.md           # Generated on finish
+    ├── summary.md           # Generated on finish / abort
     ├── logs/
     └── artifacts/
         ├── checkpoints/
@@ -284,14 +291,15 @@ All commands accept:
 Initialize a new experiment.
 
 ```bash
-kai-exman init [--description TEXT] [--tags TAGS] [--config PATH]
+kai-exman init [--description TEXT] [--tags TAGS] [--config PATH] [--data-path PATH]
 ```
 
 | Option | Description |
 | --- | --- |
-| `-d, --description` | Human-readable experiment description. |
+| `-d, --description` | Human-readable experiment description. **Required** in non-TTY mode. |
 | `-t, --tags` | Comma-separated tags. Empty entries are rejected. |
 | `-c, --config` | Path to a YAML configuration file to copy into the experiment. |
+| `--data-path` | Path to a dataset file or directory. A BLAKE2b hash is computed automatically and stored in `data_hash`. |
 
 #### `list` (alias: `log`)
 
@@ -328,15 +336,51 @@ kai-exman show [--full-id] EXP_ID
 Close an experiment and generate `summary.md`.
 
 ```bash
-kai-exman finish [--notes NOTES] EXP_ID
+kai-exman finish [--summary TEXT] [--notes NOTES] EXP_ID
 ```
 
 | Option | Description |
 | --- | --- |
-| `-n, --notes` | Post-mortem notes included in the summary. |
+| `-s, --summary` | **Mandatory** conclusion reflecting on the experiment. |
+| `-n, --notes` | Optional post-mortem notes included in the summary. |
 | `EXP_ID` | Full ID or unambiguous prefix of the experiment to finish. |
 
-Status is auto-determined from the last attempt's `exit_code`: `0` → `success`, non-zero → `failed`, `None` → `aborted`. Raises an error if the experiment has no attempts.
+Status is auto-determined from the last attempt's `exit_code`: `0` → `success`, non-zero → `failed`, `None` → `aborted`. Raises an error if the experiment has no attempts or if already sealed.
+
+#### `abort`
+
+Permanently seal an experiment as having no value. No summary is required.
+
+```bash
+kai-exman abort [--notes NOTES] EXP_ID
+```
+
+| Option | Description |
+| --- | --- |
+| `-n, --notes` | Optional notes for the generated `summary.md`. |
+| `EXP_ID` | Full ID or unambiguous prefix of the experiment to abort. |
+
+The act of aborting is the complete statement. The summary is set to `"Aborted by user."` automatically. Aborted experiments cannot be resumed or inherited from.
+
+#### `run`
+
+Execute a command within an experiment context.
+
+```bash
+kai-exman run [--description TEXT] [--tags TAGS] [--config PATH] [--data-path PATH] [--resume ID] [--group GROUP] -- COMMAND
+```
+
+| Option | Description |
+| --- | --- |
+| `-d, --description` | **Required** for fresh runs and Case B inheritance. |
+| `-t, --tags` | Comma-separated tags. |
+| `-c, --config` | Path to a YAML configuration file. |
+| `--data-path` | Dataset path for automatic BLAKE2b hash. |
+| `--resume` | Experiment ID to resume from. Triggers Case A/B auto-detection. |
+| `-g, --group` | Target group (ignored for Case A retry). |
+| `COMMAND` | Command and arguments to execute, after `--`. |
+
+The command is recorded in the attempt's `command` field for full reproducibility.
 
 #### `tag`
 
@@ -512,11 +556,13 @@ class Attempt(BaseModel):
     status: str = "running"
     exit_code: int | None = None
     reason: str = ""
+    command: list[str] = []  # argv recorded at attempt start
 
 class Metadata(BaseModel):
     # ... existing fields ...
     parent_id: str = ""      # Set for evolved experiments (Case B)
     attempts: list[Attempt] = []  # Populated for retries (Case A)
+    data_hash: str = ""      # BLAKE2b hash of dataset at init time
 ```
 
 ### Context-Aware Resume Logic

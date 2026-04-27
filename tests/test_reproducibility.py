@@ -228,8 +228,10 @@ def test_patch_file_absent_when_clean(tmp_exman_path, monkeypatch):
     assert not (exp.root / "code.patch").exists()
 
 
-def test_patch_written_on_init_when_dirty(tmp_exman_path, monkeypatch):
+def test_patch_written_on_init_when_dirty(tmp_exman_path):
     """If init detects a dirty repo, code.patch should be written."""
+    import os
+
     # Create a fake git repo with a critical path file
     repo = Path(tmp_exman_path) / "repo"
     repo.mkdir()
@@ -261,8 +263,14 @@ def test_patch_written_on_init_when_dirty(tmp_exman_path, monkeypatch):
     # Modify a critical file to make it dirty
     (src_dir / "model.py").write_text("print(2)")
 
-    exman = ExMan(root=tmp_exman_path)
-    exp = exman.init(description="dirty patch test")
+    # _git_info runs in the current process directory; chdir into the repo
+    old_cwd = os.getcwd()
+    os.chdir(repo)
+    try:
+        exman = ExMan(root=tmp_exman_path)
+        exp = exman.init(description="dirty patch test")
+    finally:
+        os.chdir(old_cwd)
 
     patch_path = exp.root / "code.patch"
     assert patch_path.exists()

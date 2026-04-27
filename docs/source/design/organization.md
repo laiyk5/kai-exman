@@ -35,11 +35,13 @@ class Metadata(BaseModel):
     git_dirty: bool = False
     tags: list[str] = Field(default_factory=list)
     data_version: str = ""
+    data_hash: str = ""            # BLAKE2b hash of --data-path
     description: str = ""
     status: str = "running"
     parent_id: str = ""
     attempts: list[Attempt] = Field(default_factory=list)
     group: str = "default"          # NEW in v0.2.0
+    deletable: bool = False
 ```
 
 | Field | Type | Default | Semantics |

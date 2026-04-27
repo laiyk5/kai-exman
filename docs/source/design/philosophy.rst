@@ -24,10 +24,11 @@ Each experiment is a folder::
 
 Contents:
 
-- ``metadata.json`` — Structured info (ID, start_time, git_commit, dvc_hash, status).
+- ``metadata.json`` — Structured info (ID, start_time, git_commit, data_hash, status).
 - ``config.yaml`` — Model hyperparameters and environment settings.
 - ``metrics.jsonl`` — Append-only time-series data (one JSON object per line).
 - ``env.txt`` — Snapshot of installed Python packages.
+- ``code.patch`` — Git diff patch (only present if workspace was dirty at init).
 - ``logs/`` — Plain text ``.log`` files for debugging.
 - ``artifacts/`` — Subfolders for ``checkpoints/``, ``plots/``, and ``bad_cases.json``.
 - ``summary.md`` — Final post-mortem report and next-step actions.
@@ -50,6 +51,8 @@ Data Versioning
 ---------------
 
 Pass a ``data_version`` string (e.g., DVC hash or MD5 checksum) during ``init()`` to bind the experiment to a specific dataset state. This prevents silent data drift from breaking reproducibility.
+
+Alternatively, use ``--data-path PATH`` on ``run`` or ``init``. Kai-Exman automatically computes a deterministic BLAKE2b hash of the file or directory and stores it in ``metadata.data_hash``. This requires no manual bookkeeping and catches any data change, including renames.
 
 Environment Snapshots
 ---------------------

@@ -17,6 +17,8 @@ A lightweight, filesystem-first experiment management toolkit designed for repro
    design/philosophy
    design/specs
    design/organization
+   design/lifecycle
+   design/reproducibility
 
 Indices and tables
 ==================
