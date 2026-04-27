@@ -1448,7 +1448,7 @@ def rm(
     exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
 
     if clear_trash:
-        items = exman.clear_trash(dry_run=dry_run)
+        items = exman.clear_trash(dry_run=True)
         if not items:
             click.echo("Trash is already empty.")
             return
@@ -1467,7 +1467,6 @@ def rm(
                     "Use --dry-run to preview."
                 )
 
-        # Re-run without dry_run after confirmation
         if not dry_run:
             items = exman.clear_trash(dry_run=False)
 

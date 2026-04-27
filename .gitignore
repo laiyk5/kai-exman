@@ -9,6 +9,9 @@ wheels/
 # Virtual environments
 .venv
 
+# Coverage
+.coverage
+
 # Experiment outputs
 outputs/
 
