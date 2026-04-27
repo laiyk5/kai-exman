@@ -39,6 +39,7 @@ class Attempt(BaseModel):
     status: str = "running"
     exit_code: int | None = None
     reason: str = ""
+    command: list[str] = Field(default_factory=list)
 
 
 class Metadata(BaseModel):
@@ -72,6 +73,8 @@ class Metadata(BaseModel):
     finished_at: str = ""
     locked: bool = False
     summary: str = ""
+    deletable: bool = False
+    data_hash: str = ""
 
 
 class MetricsRow(BaseModel):
