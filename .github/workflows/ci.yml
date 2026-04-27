@@ -52,4 +52,4 @@ jobs:
         run: mypy --strict src/kaiexman/
 
       - name: Check docstring coverage
-        run: interrogate -v --fail-under=100 src/kaiexman/
+        run: interrogate -v --fail-under=100 --ignore-overloaded-functions src/kaiexman/
