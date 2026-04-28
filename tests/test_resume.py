@@ -327,6 +327,7 @@ def test_show_displays_parent_id(tmp_exman_path, monkeypatch):
             "--path",
             tmp_exman_path,
             "show",
+            "--id",
             child.metadata.exp_id,
         ],
     )

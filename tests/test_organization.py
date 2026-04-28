@@ -527,6 +527,7 @@ def test_abort_command_sets_aborted_status(tmp_exman_path):
             "--path",
             tmp_exman_path,
             "abort",
+            "--id",
             exp.metadata.exp_id,
         ],
     )
@@ -558,6 +559,7 @@ def test_abort_command_blocks_no_attempts(tmp_exman_path):
             "--path",
             tmp_exman_path,
             "abort",
+            "--id",
             exp.metadata.exp_id,
         ],
     )
@@ -586,6 +588,7 @@ def test_abort_command_blocks_already_locked(tmp_exman_path):
             "--path",
             tmp_exman_path,
             "abort",
+            "--id",
             exp.metadata.exp_id,
         ],
     )

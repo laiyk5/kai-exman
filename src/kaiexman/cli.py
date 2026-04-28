@@ -422,55 +422,16 @@ def init(
     _echo_lines(ctx, lines)
 
 
-def _resolve_run_args(exman: ExMan, args: tuple[str, ...]) -> tuple[str, list[str]]:
-    """Resolve experiment ID and command from run arguments.
-
-    If the first argument matches exactly one experiment prefix, it is
-    treated as the experiment ID and the rest form the command.
-    Otherwise the default experiment is used and all args form the command.
-
-    A leading '--' is stripped from the command if present.
-    """
-    if not args:
-        raise click.ClickException(
-            "No command to execute. Provide a command, e.g.:\n"
-            "  kai-exman run -- python train.py"
-        )
-
-    # If first arg is '--', skip it and use default exp
-    if args[0] == "--":
-        exp_id = _resolve_exp_id_or_default(exman, None)
-        command = list(args[1:])
-        if not command:
-            raise click.ClickException("No command to execute.")
-        return exp_id, command
-
-    first = args[0]
-    matches = [e for e in exman.list() if e.metadata.exp_id.startswith(first)]
-    if len(matches) == 1:
-        exp_id = matches[0].metadata.exp_id
-        command = list(args[1:])
-    else:
-        exp_id = _resolve_exp_id_or_default(exman, None)
-        command = list(args)
-
-    # Strip leading '--' if present
-    if command and command[0] == "--":
-        command = command[1:]
-
-    if not command:
-        raise click.ClickException("No command to execute.")
-    return exp_id, command
-
-
 @cli.command()
-@click.argument("args", nargs=-1, required=True)
+@click.argument("args", nargs=-1, required=False)
+@click.option("--id", "exp_id", help="Experiment ID (defaults to current)")
 @click.option("--data-path", help="Dataset path for automatic hash")
 @click.option("--reason", help="Reason for this attempt (e.g. 'retry after OOM')")
 @click.pass_context
 def run(
     ctx: click.Context,
     args: tuple[str, ...],
+    exp_id: str | None,
     data_path: str | None,
     reason: str,
 ) -> None:
@@ -480,13 +441,26 @@ def run(
     running experiment. Finished or aborted experiments cannot be run.
 
     Usage:
-        kai-exman run -- python train.py              (uses default exp)
-        kai-exman run <exp_id> -- python train.py     (uses specific exp)
+        kai-exman run -- python train.py                    (uses default exp)
+        kai-exman run --id <exp_id> -- python train.py      (uses specific exp)
     """
     cfg_mgr: ConfigManager = ctx.obj["config"]
     exman = ExMan(root=ctx.obj["path"], config=cfg_mgr)
 
-    resolved_id, command = _resolve_run_args(exman, args)
+    if exp_id:
+        resolved_id = _resolve_exp_id(exman, exp_id)
+    else:
+        resolved_id = _resolve_exp_id_or_default(exman, None)
+
+    command = list(args)
+    if command and command[0] == "--":
+        command = command[1:]
+
+    if not command:
+        raise click.ClickException(
+            "No command to execute. Provide a command, e.g.:\n"
+            "  kai-exman run -- python train.py"
+        )
 
     short_len = cfg_mgr.get("short_id_length", 8)
     short_id = resolved_id[:short_len]
@@ -1016,7 +990,7 @@ def _build_tree_lines(
 
 
 @cli.command()
-@click.argument("exp_id", required=False)
+@click.option("--id", "exp_id", help="Experiment ID (defaults to current)")
 @click.option(
     "--summary",
     "-s",
@@ -1078,7 +1052,7 @@ def finish(ctx: click.Context, exp_id: str | None, summary: str, notes: str) -> 
 
 
 @cli.command()
-@click.argument("exp_id", required=False)
+@click.option("--id", "exp_id", help="Experiment ID (defaults to current)")
 @click.option("--notes", "-n", default="", help="Additional post-mortem notes")
 @click.pass_context
 def abort(ctx: click.Context, exp_id: str | None, notes: str) -> None:
@@ -1111,7 +1085,7 @@ def abort(ctx: click.Context, exp_id: str | None, notes: str) -> None:
 
 
 @cli.command(name="status")
-@click.argument("exp_id", required=False)
+@click.option("--id", "exp_id", help="Experiment ID (defaults to current)")
 @click.option(
     "--full-id",
     is_flag=True,
@@ -1187,14 +1161,16 @@ def status(ctx: click.Context, exp_id: str | None, full_id: bool) -> None:
 
 
 @cli.command(name="tag")
-@click.argument("args", nargs=-1)
+@click.argument("tag_name", required=False)
+@click.option("--id", "exp_id", help="Experiment ID (defaults to current)")
 @click.option("--delete", "-d", is_flag=True, help="Remove the tag")
 @click.option("--list", "-l", is_flag=True, help="List all tags with counts")
 @click.option("--group", help="Filter tags to a specific group")
 @click.pass_context
 def tag_cmd(
     ctx: click.Context,
-    args: tuple[str, ...],
+    tag_name: str,
+    exp_id: str | None,
     delete: bool,
     list: bool,
     group: str | None,
@@ -1202,24 +1178,19 @@ def tag_cmd(
     """Add, remove, or list tags.
 
     Usage:
-        kai-exman tag <tag_name>              # add tag to default experiment
-        kai-exman tag <exp_id> <tag_name>     # add tag to specific experiment
-        kai-exman tag -d <tag_name>           # remove tag
-        kai-exman tag -l                      # list all tags
-        kai-exman tag -l --group <group>      # list tags in a group
+        kai-exman tag <tag_name>                    # add tag to default exp
+        kai-exman tag <tag_name> --id <exp_id>      # add tag to specific exp
+        kai-exman tag -d <tag_name>                 # remove tag from default exp
+        kai-exman tag -d <tag_name> --id <exp_id>   # remove tag from specific exp
+        kai-exman tag -l                            # list all tags
+        kai-exman tag -l --group <group>            # list tags in a group
     """
     if list:
         _list_tags(ctx, group)
         return
 
-    if len(args) == 1:
-        tag_name = args[0]
-        exp_id: str | None = None
-    elif len(args) == 2:
-        exp_id = args[0]
-        tag_name = args[1]
-    else:
-        raise click.ClickException("tag requires 1 or 2 arguments: [EXP_ID] TAG_NAME")
+    if not tag_name:
+        raise click.ClickException("TAG_NAME is required. Use -l to list tags.")
 
     _validate_tag(tag_name)
     cfg_mgr: ConfigManager = ctx.obj["config"]
@@ -1283,7 +1254,7 @@ def _list_tags(ctx: click.Context, group: str | None) -> None:
 
 
 @cli.command()
-@click.argument("exp_id", required=False)
+@click.option("--id", "exp_id", help="Experiment ID (defaults to current)")
 @click.option("--group", "-g", required=True, help="Target group name")
 @click.pass_context
 def move(ctx: click.Context, exp_id: str | None, group: str) -> None:

@@ -317,12 +317,12 @@ kai-exman init -d "..." [-t TAGS] [-c CONFIG] [--data-path PATH] [-g GROUP] [--i
 Execute a command on an existing experiment. Never creates a new experiment.
 
 ```bash
-kai-exman run [EXP_ID] [--data-path PATH] [--reason TEXT] -- COMMAND
+kai-exman run [--id EXP_ID] [--data-path PATH] [--reason TEXT] -- COMMAND
 ```
 
 | Option | Description |
 | --- | --- |
-| `EXP_ID` | Optional experiment ID. Uses default experiment if omitted. |
+| `--id` | Optional experiment ID. Uses default experiment if omitted. |
 | `--data-path` | Dataset path for automatic BLAKE2b hash. |
 | `--reason` | Reason for this attempt (e.g. `retry after OOM`). Defaults to `run_N`. |
 | `COMMAND` | Command and arguments to execute, after `--`. |
@@ -357,27 +357,27 @@ kai-exman list [--sort-by METRIC] [--order {asc,desc}] [--top N] [--oneline] [--
 Display a detailed summary of a specific experiment.
 
 ```bash
-kai-exman status [EXP_ID] [--full-id]
+kai-exman status [--id EXP_ID] [--full-id]
 ```
 
 | Option | Description |
 | --- | --- |
 | `--full-id` | Display the full 16-character experiment ID in the metadata panel. |
-| `EXP_ID` | Full ID or unambiguous prefix. Uses default experiment if omitted. |
+| `--id` | Full ID or unambiguous prefix. Uses default experiment if omitted. |
 
 #### `finish`
 
 Close an experiment and generate `summary.md`.
 
 ```bash
-kai-exman finish [EXP_ID] -s "..." [-n NOTES]
+kai-exman finish [--id EXP_ID] -s "..." [-n NOTES]
 ```
 
 | Option | Description |
 | --- | --- |
 | `-s, --summary` | **Mandatory** conclusion reflecting on the experiment. |
 | `-n, --notes` | Optional post-mortem notes included in the summary. |
-| `EXP_ID` | Full ID or unambiguous prefix. Uses default experiment if omitted. |
+| `--id` | Full ID or unambiguous prefix. Uses default experiment if omitted. |
 
 Status is auto-determined from the last attempt's `exit_code`: `0` → `success`, non-zero → `failed`, `None` → `aborted`. Raises an error if the experiment has no attempts or if already sealed.
 
@@ -386,13 +386,13 @@ Status is auto-determined from the last attempt's `exit_code`: `0` → `success`
 Permanently seal an experiment as having no value. No summary is required.
 
 ```bash
-kai-exman abort [EXP_ID] [-n NOTES]
+kai-exman abort [--id EXP_ID] [-n NOTES]
 ```
 
 | Option | Description |
 | --- | --- |
 | `-n, --notes` | Optional notes for the generated `summary.md`. |
-| `EXP_ID` | Full ID or unambiguous prefix. Uses default experiment if omitted. |
+| `--id` | Full ID or unambiguous prefix. Uses default experiment if omitted. |
 
 The act of aborting is the complete statement. The summary is set to `"Aborted by user."` automatically. Aborted experiments cannot be inherited from.
 
@@ -401,14 +401,14 @@ The act of aborting is the complete statement. The summary is set to `"Aborted b
 Add or remove a tag on an experiment.
 
 ```bash
-kai-exman tag [EXP_ID] TAG_NAME [--delete]
+kai-exman tag TAG_NAME [--delete] [--id EXP_ID]
 ```
 
 | Option | Description |
 | --- | --- |
 | `-d, --delete` | Remove the tag instead of adding it. |
 | `-l, --list` | List all tags across experiments. |
-| `EXP_ID` | Full ID or unambiguous prefix. Uses default experiment if omitted. |
+| `--id` | Full ID or unambiguous prefix. Uses default experiment if omitted. |
 | `TAG_NAME` | Tag to add or remove. Must pass `validate_tag()`. |
 
 #### `group` (alias: `suggest-groups`)
@@ -430,13 +430,13 @@ kai-exman group [-l] [--threshold FLOAT] [--apply]
 Move an experiment to another group.
 
 ```bash
-kai-exman move [EXP_ID] -g GROUP
+kai-exman move -g GROUP [--id EXP_ID]
 ```
 
 | Option | Description |
 | --- | --- |
 | `-g, --group` | **Required.** Target group name. |
-| `EXP_ID` | Full ID or unambiguous prefix. Uses default experiment if omitted. |
+| `--id` | Full ID or unambiguous prefix. Uses default experiment if omitted. |
 
 #### `use`
 

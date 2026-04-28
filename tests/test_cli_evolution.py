@@ -38,6 +38,7 @@ def test_run_on_running_appends_attempt(tmp_exman_path, monkeypatch):
             "--path",
             tmp_exman_path,
             "run",
+            "--id",
             parent.metadata.exp_id,
             "--",
             "echo",
@@ -50,7 +51,7 @@ def test_run_on_running_appends_attempt(tmp_exman_path, monkeypatch):
 
 
 def test_run_on_finished_fails(tmp_exman_path, monkeypatch):
-    """run <exp_id> on a finished experiment raises a clear error."""
+    """run --id <exp_id> on a finished experiment raises a clear error."""
     exman = ExMan(root=tmp_exman_path)
     parent = exman.init(description="finished parent")
 
@@ -71,6 +72,7 @@ def test_run_on_finished_fails(tmp_exman_path, monkeypatch):
             "--path",
             tmp_exman_path,
             "run",
+            "--id",
             parent.metadata.exp_id,
             "--",
             "echo",
@@ -82,7 +84,7 @@ def test_run_on_finished_fails(tmp_exman_path, monkeypatch):
 
 
 def test_run_on_aborted_fails(tmp_exman_path, monkeypatch):
-    """run <exp_id> on an aborted experiment raises a clear error."""
+    """run --id <exp_id> on an aborted experiment raises a clear error."""
     exman = ExMan(root=tmp_exman_path)
     parent = exman.init(description="aborted parent")
 
@@ -104,6 +106,7 @@ def test_run_on_aborted_fails(tmp_exman_path, monkeypatch):
             "--path",
             tmp_exman_path,
             "run",
+            "--id",
             parent.metadata.exp_id,
             "--",
             "echo",

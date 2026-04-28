@@ -107,10 +107,10 @@ Create a child from finished parent(s)::
 Execute a command on an existing experiment::
 
     # Run on draft (creates attempt 1)
-    kai-exman run <exp_id> -- python train.py
+    kai-exman run --id <exp_id> -- python train.py
 
     # Retry on running experiment (appends attempt N)
-    kai-exman run <exp_id> --reason "retry after OOM" -- python train.py
+    kai-exman run --id <exp_id> --reason "retry after OOM" -- python train.py
 
     # Uses default experiment if ID omitted
     kai-exman run -- python train.py
@@ -138,8 +138,8 @@ List experiments::
 
 Show experiment details::
 
-    kai-exman status <exp_id>
-    kai-exman status --full-id <exp_id>
+    kai-exman status --id <exp_id>
+    kai-exman status --id <exp_id> --full-id
 
 Set the default experiment::
 
@@ -147,12 +147,12 @@ Set the default experiment::
 
 Move an experiment to a different group::
 
-    kai-exman move <exp_id> eval
+    kai-exman move --id <exp_id> --group eval
 
 Tag or untag an experiment::
 
-    kai-exman tag <exp_id> production
-    kai-exman tag <exp_id> production --delete
+    kai-exman tag production --id <exp_id>
+    kai-exman tag production --delete --id <exp_id>
 
 List all tags::
 
@@ -171,7 +171,7 @@ Group management::
 
 Finish an experiment and generate summary.md (``--summary`` is mandatory)::
 
-    kai-exman finish <exp_id> -s "Best run so far" -n "Observed 2% gain"
+    kai-exman finish --id <exp_id> -s "Best run so far" -n "Observed 2% gain"
 
 Status is auto-determined from the last attempt's exit code:
 
@@ -181,7 +181,7 @@ Status is auto-determined from the last attempt's exit code:
 
 Abort an experiment manually (no summary required)::
 
-    kai-exman abort <exp_id>
+    kai-exman abort --id <exp_id>
 
 Use ``abort`` when an experiment was stopped manually or did not complete
 normally. It marks the last attempt as aborted and seals the record.

@@ -147,7 +147,7 @@ def test_cli_tag_add_succeeds(tmp_exman_path):
     runner = CliRunner()
     result = runner.invoke(
         cli,
-        ["--path", tmp_exman_path, "tag", exp.metadata.exp_id, "baseline"],
+        ["--path", tmp_exman_path, "tag", "baseline", "--id", exp.metadata.exp_id],
     )
     assert result.exit_code == 0
     assert "baseline" in result.output
@@ -160,7 +160,7 @@ def test_cli_tag_add_invalid_format(tmp_exman_path):
     runner = CliRunner()
     result = runner.invoke(
         cli,
-        ["--path", tmp_exman_path, "tag", "abc123", "Best Experiment!"],
+        ["--path", tmp_exman_path, "tag", "Best Experiment!", "--id", "abc123"],
     )
     assert result.exit_code != 0
     assert "Invalid tag format" in result.output
@@ -176,9 +176,10 @@ def test_cli_tag_delete_succeeds(tmp_exman_path):
             "--path",
             tmp_exman_path,
             "tag",
-            exp.metadata.exp_id,
             "baseline",
             "-d",
+            "--id",
+            exp.metadata.exp_id,
         ],
     )
     assert result.exit_code == 0

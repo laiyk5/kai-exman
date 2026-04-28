@@ -8,72 +8,81 @@ from click.testing import CliRunner
 src = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(src))
 
-import pytest
-
 from kaiexman import ExMan
-from kaiexman.cli import _resolve_run_args, cli
+from kaiexman.cli import cli
 
 # -----------------------------------------------------------------------------
-# _resolve_run_args
+# run command
 # -----------------------------------------------------------------------------
 
 
-def test_resolve_run_args_empty_raises(tmp_exman_path):
-    """Empty args should raise ClickException."""
+def test_run_uses_default_experiment(tmp_exman_path, monkeypatch):
+    """run -- COMMAND uses the default experiment."""
     exman = ExMan(root=tmp_exman_path)
-    exman.init(description="target")
-    exman.set_default_exp_id(exman.list()[0].metadata.exp_id)
-    with pytest.raises(Exception, match="No command to execute"):
-        _resolve_run_args(exman, ())
-
-
-def test_resolve_run_args_double_dash_uses_default(tmp_exman_path):
-    """'--' as first arg uses default experiment."""
-    exman = ExMan(root=tmp_exman_path)
-    exp = exman.init(description="target")
+    exp = exman.init(description="run target")
     exman.set_default_exp_id(exp.metadata.exp_id)
-    resolved_id, command = _resolve_run_args(exman, ("--", "echo", "hello"))
-    assert resolved_id == exp.metadata.exp_id
-    assert command == ["echo", "hello"]
+
+    from kaiexman.models import Attempt
+
+    exp.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
+    exp.write_metadata()
+
+    monkeypatch.setattr(
+        ExMan, "_current_git_state", lambda _self: (exp.metadata.git_hash, False)
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli, ["--path", tmp_exman_path, "run", "--", "echo", "hello"]
+    )
+    assert result.exit_code == 0
+    reloaded = exman.get(exp.metadata.exp_id)
+    assert len(reloaded.metadata.attempts) == 2
 
 
-def test_resolve_run_args_double_dash_no_command_raises(tmp_exman_path):
-    """'--' with no following command should raise."""
+def test_run_with_id_override(tmp_exman_path, monkeypatch):
+    """run --id EXP_ID -- COMMAND targets a specific experiment."""
     exman = ExMan(root=tmp_exman_path)
-    exp = exman.init(description="target")
+    exp = exman.init(description="run target")
+
+    from kaiexman.models import Attempt
+
+    exp.metadata.attempts.append(Attempt(sequence=1, status="running", exit_code=0))
+    exp.write_metadata()
+
+    monkeypatch.setattr(
+        ExMan, "_current_git_state", lambda _self: (exp.metadata.git_hash, False)
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "--path",
+            tmp_exman_path,
+            "run",
+            "--id",
+            exp.metadata.exp_id,
+            "--",
+            "echo",
+            "hello",
+        ],
+    )
+    assert result.exit_code == 0
+    reloaded = exman.get(exp.metadata.exp_id)
+    assert len(reloaded.metadata.attempts) == 2
+
+
+def test_run_no_command_raises(tmp_exman_path):
+    """run with no command raises an error."""
+    exman = ExMan(root=tmp_exman_path)
+    exp = exman.init(description="run test")
     exman.set_default_exp_id(exp.metadata.exp_id)
-    with pytest.raises(Exception, match="No command to execute"):
-        _resolve_run_args(exman, ("--",))
 
-
-def test_resolve_run_args_prefix_match(tmp_exman_path):
-    """First arg matching exactly one exp prefix is treated as exp_id."""
-    exman = ExMan(root=tmp_exman_path)
-    exp = exman.init(description="target")
-    prefix = exp.metadata.exp_id[:4]
-    resolved_id, command = _resolve_run_args(exman, (prefix, "echo", "hello"))
-    assert resolved_id == exp.metadata.exp_id
-    assert command == ["echo", "hello"]
-
-
-def test_resolve_run_args_no_prefix_match_uses_default(tmp_exman_path):
-    """First arg not matching any exp uses default."""
-    exman = ExMan(root=tmp_exman_path)
-    exp = exman.init(description="target")
-    exman.set_default_exp_id(exp.metadata.exp_id)
-    resolved_id, command = _resolve_run_args(exman, ("echo", "hello"))
-    assert resolved_id == exp.metadata.exp_id
-    assert command == ["echo", "hello"]
-
-
-def test_resolve_run_args_strips_leading_dashdash(tmp_exman_path):
-    """Leading '--' in command is stripped."""
-    exman = ExMan(root=tmp_exman_path)
-    exp = exman.init(description="target")
-    prefix = exp.metadata.exp_id[:4]
-    resolved_id, command = _resolve_run_args(exman, (prefix, "--", "echo", "hello"))
-    assert resolved_id == exp.metadata.exp_id
-    assert command == ["echo", "hello"]
+    runner = CliRunner()
+    result = runner.invoke(cli, ["--path", tmp_exman_path, "run", "--"])
+    assert result.exit_code != 0
+    assert "no command" in result.output.lower()
 
 
 # -----------------------------------------------------------------------------
@@ -106,7 +115,7 @@ def test_status_shows_experiment_details(tmp_exman_path):
 
     runner = CliRunner()
     result = runner.invoke(
-        cli, ["--path", tmp_exman_path, "status", exp.metadata.exp_id]
+        cli, ["--path", tmp_exman_path, "status", "--id", exp.metadata.exp_id]
     )
     assert result.exit_code == 0
     assert "status test" in result.output
@@ -121,7 +130,15 @@ def test_status_full_id_flag(tmp_exman_path):
 
     runner = CliRunner()
     result = runner.invoke(
-        cli, ["--path", tmp_exman_path, "status", "--full-id", exp.metadata.exp_id]
+        cli,
+        [
+            "--path",
+            tmp_exman_path,
+            "status",
+            "--id",
+            exp.metadata.exp_id,
+            "--full-id",
+        ],
     )
     assert result.exit_code == 0
     assert exp.metadata.exp_id in result.output
@@ -130,7 +147,9 @@ def test_status_full_id_flag(tmp_exman_path):
 def test_status_not_found_raises(tmp_exman_path):
     """status with a nonexistent ID should fail."""
     runner = CliRunner()
-    result = runner.invoke(cli, ["--path", tmp_exman_path, "status", "nonexistent"])
+    result = runner.invoke(
+        cli, ["--path", tmp_exman_path, "status", "--id", "nonexistent"]
+    )
     assert result.exit_code != 0
     assert "no experiment found" in result.output.lower()
 
@@ -150,7 +169,7 @@ def test_status_with_parent_id(tmp_exman_path, monkeypatch):
 
     runner = CliRunner()
     result = runner.invoke(
-        cli, ["--path", tmp_exman_path, "status", child.metadata.exp_id]
+        cli, ["--path", tmp_exman_path, "status", "--id", child.metadata.exp_id]
     )
     assert result.exit_code == 0
     assert "Parent:" in result.output
@@ -167,7 +186,7 @@ def test_status_with_config_and_metrics(tmp_exman_path):
 
     runner = CliRunner()
     result = runner.invoke(
-        cli, ["--path", tmp_exman_path, "status", exp.metadata.exp_id]
+        cli, ["--path", tmp_exman_path, "status", "--id", exp.metadata.exp_id]
     )
     assert result.exit_code == 0
     assert "lr:" in result.output
@@ -188,7 +207,7 @@ def test_status_with_attempts(tmp_exman_path):
 
     runner = CliRunner()
     result = runner.invoke(
-        cli, ["--path", tmp_exman_path, "status", exp.metadata.exp_id]
+        cli, ["--path", tmp_exman_path, "status", "--id", exp.metadata.exp_id]
     )
     assert result.exit_code == 0
     assert "Attempts:" in result.output
@@ -239,11 +258,11 @@ def test_tag_list_filtered_by_group(tmp_exman_path):
 
 
 def test_tag_wrong_args_raises(tmp_exman_path):
-    """tag with wrong number of args raises an error."""
+    """tag with extra positional args raises an error."""
     runner = CliRunner()
     result = runner.invoke(cli, ["--path", tmp_exman_path, "tag", "a", "b", "c"])
     assert result.exit_code != 0
-    assert "requires 1 or 2 arguments" in result.output.lower()
+    assert "unexpected extra arguments" in result.output.lower()
 
 
 # -----------------------------------------------------------------------------
@@ -447,7 +466,15 @@ def test_finish_runtime_error_path(tmp_exman_path):
     runner = CliRunner()
     result = runner.invoke(
         cli,
-        ["--path", tmp_exman_path, "finish", "--summary", "Done.", exp.metadata.exp_id],
+        [
+            "--path",
+            tmp_exman_path,
+            "finish",
+            "--id",
+            exp.metadata.exp_id,
+            "--summary",
+            "Done.",
+        ],
     )
     assert result.exit_code != 0
     assert "no attempts" in result.output.lower() or "running" in result.output.lower()
@@ -460,7 +487,7 @@ def test_abort_value_error_no_attempts(tmp_exman_path):
 
     runner = CliRunner()
     result = runner.invoke(
-        cli, ["--path", tmp_exman_path, "abort", exp.metadata.exp_id]
+        cli, ["--path", tmp_exman_path, "abort", "--id", exp.metadata.exp_id]
     )
     assert result.exit_code != 0
     assert "no attempts" in result.output.lower()
@@ -488,6 +515,8 @@ def test_alias_show_redirects_to_status(tmp_exman_path):
     exp = exman.init(description="alias test")
 
     runner = CliRunner()
-    result = runner.invoke(cli, ["--path", tmp_exman_path, "show", exp.metadata.exp_id])
+    result = runner.invoke(
+        cli, ["--path", tmp_exman_path, "show", "--id", exp.metadata.exp_id]
+    )
     assert result.exit_code == 0
     assert "alias test" in result.output

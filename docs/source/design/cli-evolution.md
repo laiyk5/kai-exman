@@ -35,7 +35,7 @@ exman.finish(exp.metadata.exp_id, summary="...")
 
 | User Action | Error |
 |-------------|-------|
-| `run <finished_id> -- cmd` | "Experiment is finished. Use `init --inherit` to create a child." |
+| `run --id <finished_id> -- cmd` | "Experiment is finished. Use `init --inherit` to create a child." |
 | `init --inherit <running_id>` | "Experiment is still running. Run `init` after finishing or aborting." |
 | `init --inherit <aborted_id>` | "Aborted experiments cannot be inherited." |
 
@@ -94,7 +94,7 @@ The default experiment is scoped to the experiments root (`--path` / `EXMAN_PATH
 | `finish` | Yes                      | —                                                       |
 | `abort`  | Yes                      | —                                                       |
 | `status` | Yes                      | —                                                       |
-| `tag`    | Yes                      | Accepts `TAG_NAME` (default exp) or `EXP_ID TAG_NAME`.  |
+| `tag`    | Yes                      | Accepts `TAG_NAME` (default exp) with optional `--id`.  |
 | `move`   | Yes                      | `--group` is always required.                           |
 | `rm`     | Yes                      | `--clear-trash` still takes precedence.                 |
 | `run`    | Yes                      | Uses default experiment if ID omitted.                  |
@@ -116,7 +116,7 @@ Default experiment set to a1b2c3d4.
 
 ## 3. Acceptance Criteria
 
-1. `run <id> -- cmd` on a running experiment appends an attempt (git clean required).
+1. `run --id <id> -- cmd` on a running experiment appends an attempt (git clean required).
 2. `run <id> -- cmd` on a finished experiment raises.
 3. `init --inherit <pid> -d "..."` succeeds only if the parent is `finished`.
 4. `kai-exman use <id>` writes `.current` and validates the ID.

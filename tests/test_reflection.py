@@ -143,7 +143,7 @@ def test_finish_cli_rejects_missing_summary(tmp_exman_path):
     runner = CliRunner()
     result = runner.invoke(
         cli,
-        ["--path", tmp_exman_path, "finish", exp.metadata.exp_id],
+        ["--path", tmp_exman_path, "finish", "--id", exp.metadata.exp_id],
     )
     assert result.exit_code != 0
     assert "summary is required" in result.output.lower()
@@ -164,9 +164,10 @@ def test_finish_cli_saves_summary_to_metadata(tmp_exman_path):
             "--path",
             tmp_exman_path,
             "finish",
+            "--id",
+            exp.metadata.exp_id,
             "--summary",
             "Model converged cleanly.",
-            exp.metadata.exp_id,
         ],
     )
     assert result.exit_code == 0
@@ -192,7 +193,7 @@ def test_abort_cli_succeeds_without_summary(tmp_exman_path):
     runner = CliRunner()
     result = runner.invoke(
         cli,
-        ["--path", tmp_exman_path, "abort", exp.metadata.exp_id],
+        ["--path", tmp_exman_path, "abort", "--id", exp.metadata.exp_id],
     )
     assert result.exit_code == 0
     assert "aborted" in result.output.lower()
@@ -214,7 +215,7 @@ def test_abort_cli_sets_default_summary(tmp_exman_path):
     runner = CliRunner()
     result = runner.invoke(
         cli,
-        ["--path", tmp_exman_path, "abort", exp.metadata.exp_id],
+        ["--path", tmp_exman_path, "abort", "--id", exp.metadata.exp_id],
     )
     assert result.exit_code == 0
 
@@ -366,6 +367,7 @@ def test_show_displays_summary(tmp_exman_path):
             "--path",
             tmp_exman_path,
             "show",
+            "--id",
             exp.metadata.exp_id,
         ],
     )
