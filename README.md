@@ -1,6 +1,7 @@
 # Kai-Exman
 
 [![codecov](https://codecov.io/gh/laiyk5/kai-exman/branch/main/graph/badge.svg)](https://codecov.io/gh/laiyk5/kai-exman)
+[![Documentation Status](https://readthedocs.org/projects/kai-exman/badge/?version=latest)](https://kai-exman.readthedocs.io/en/latest/?badge=latest)
 
 A filesystem-based experiment management CLI for machine learning workflows,
 inspired by Git. Kai-Exman treats the filesystem as its database, requiring
@@ -35,7 +36,7 @@ kai-exman init -d "baseline training" -t "baseline,v1" --group train
 Execute a command on the experiment:
 
 ```bash
-kai-exman run <exp_id> -- python train.py
+kai-exman run --id <exp_id> -- python train.py
 ```
 
 List experiments:
@@ -49,7 +50,7 @@ kai-exman list --oneline    # compact
 Seal the experiment with a conclusion:
 
 ```bash
-kai-exman finish <exp_id> -s "Converged to 95% accuracy"
+kai-exman finish --id <exp_id> -s "Converged to 95% accuracy"
 ```
 
 Create a child that inherits from a finished parent:
