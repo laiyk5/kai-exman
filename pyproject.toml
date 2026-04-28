@@ -1,6 +1,10 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "kai-exman"
-version = "0.1.0"
+dynamic = ["version"]
 description = "A filesystem-based experiment management CLI for machine learning workflows, inspired by Git."
 readme = "README.md"
 license = {text = "MIT"}
@@ -57,6 +61,9 @@ per-file-ignores = { "tests/**" = ["E402"], "src/kaiexman/manager.py" = ["UP006"
 [tool.deptry]
 ignore_notebooks = true
 optional_dependencies_dev_groups = ["test", "dev", "docs"]
+
+[tool.setuptools.dynamic]
+version = {attr = "kaiexman._version.__version__"}
 
 [tool.deptry.package_module_name_map]
 pre-commit = "pre_commit"
