@@ -1,10 +1,30 @@
 [project]
 name = "kai-exman"
 version = "0.1.0"
-description = "Add your description here"
+description = "A filesystem-based experiment management CLI for machine learning workflows, inspired by Git."
 readme = "README.md"
+license = {text = "MIT"}
 requires-python = ">=3.12"
+authors = [{name = "LAI Yikai", email = "laiyk5@163.com"}]
+keywords = ["experiment", "reproducibility", "ml", "cli", "tracking"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = ["pydantic>=2.0", "rich>=13.0", "pyyaml>=6.0", "click>=8.0"]
+
+[project.urls]
+Homepage = "https://github.com/laiyk5/kai-exman"
+Documentation = "https://kai-exman.readthedocs.io"
+Repository = "https://github.com/laiyk5/kai-exman"
+Issues = "https://github.com/laiyk5/kai-exman/issues"
 
 [project.scripts]
 kai-exman = "kaiexman.cli:main"
